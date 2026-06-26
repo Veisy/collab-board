@@ -73,8 +73,10 @@ function malformedPointRows(text) {
   const bad = [];
   const strict = /^\|\s*([PI]\d+)\s*\|\s*(\w+)\s*\|\s*(.*?)\s*\|\s*(\w+)\s*\|\s*(.*?)\s*\|$/;
   for (const line of text.split(/\r?\n/)) {
-    if (/^\|\s*[PI]\d+\s*\|/.test(line) && !strict.test(line))
-      bad.push((line.match(/^\|\s*([PI]\d+)/) || [])[1] || "?");
+    // Shape-detector is case-insensitive on the id so a lowercase `p1`/`i2` row (which the strict,
+    // uppercase-only parser would silently drop) is caught as malformed instead of read as resolved.
+    if (/^\|\s*[PIpi]\d+\s*\|/.test(line) && !strict.test(line))
+      bad.push((line.match(/^\|\s*([PIpi]\d+)/) || [])[1] || "?");
   }
   return bad;
 }
@@ -192,6 +194,8 @@ function cmdNew(opts) {
   if (!TYPES.includes(type)) die(`new: invalid --type "${opts.type}". One of: ${TYPES.join(", ")}`);
   const primary = sanitizeActor(opts.primary || "CLAUDE");      // DEFAULT primary: CLAUDE
   const secondary = sanitizeActor(opts.secondary || "CODEX");   // DEFAULT secondary: CODEX
+  if (primary === secondary)
+    die(`new: PRIMARY and SECONDARY must be distinct actor names (both resolved to ${primary})`);
   const adapter = opts.adapter || (primary === "CLAUDE" && secondary === "CODEX" ? "codex" : "manual");
   // The codex adapter drives the codex@openai-codex plugin from INSIDE Claude Code, so it is
   // valid ONLY when Claude is primary and Codex is secondary. Any other pairing must use a
@@ -305,6 +309,8 @@ function cmdReset(opts) {
   const roles = getKV(sess, "Roles") || "PRIMARY=CLAUDE, SECONDARY=CODEX";
   const primary = sanitizeActor(roles.match(/PRIMARY=(\w+)/)?.[1] || "CLAUDE");
   const secondary = sanitizeActor(roles.match(/SECONDARY=(\w+)/)?.[1] || "CODEX");
+  if (primary === secondary)
+    die(`reset: PRIMARY and SECONDARY must be distinct actor names (both resolved to ${primary})`);
   const adapter = getKV(sess, "SecondaryAdapter") || "codex";
   const date = id.slice(0, 10);
   const slug = id.slice(11) || slugify(type);
@@ -392,14 +398,16 @@ function lintSession(root, id, { quick }) {
 
   // L1 SPLIT-STATE — match only true State-section assignments (`- <ACTOR>: <HAND> - <ROLE>`),
   // so legitimate prose/notes bullets that mention a hand token are not false-flagged.
-  if (names.length === 2) {
+  if (names.length === 2 && names[0] !== names[1]) {
     const re = new RegExp(`^-\\s*(${names.join("|")}):\\s*(${HANDS.join("|")})\\s*-\\s*(PRIMARY|SECONDARY)\\s*$`, "m");
     const scan = (p) => { if (exists(p) && re.test(readText(p))) add("FAIL", "L1", `hand-token outside HEAD.md in ${path.relative(dir, p)}`); };
     scan(path.join(dir, "points.md")); scan(path.join(dir, "log.md")); scan(path.join(dir, "SESSION.md"));
     for (const f of turnFiles) scan(path.join(turnsDir, f));
     for (const a of (exists(path.join(dir, "agents")) ? fs.readdirSync(path.join(dir, "agents")) : []))
       scan(path.join(dir, "agents", a));
-  } else add("FAIL", "L1", `HEAD.md ## State must list exactly 2 actors (found ${names.length})`);
+  } else add("FAIL", "L1", names.length !== 2
+    ? `HEAD.md ## State must list exactly 2 actors (found ${names.length})`
+    : `HEAD.md ## State lists the same actor twice (${names[0]}) — PRIMARY and SECONDARY must be distinct`);
 
   // L2 PROJECTION
   if (!quick && names.length === 2) {
@@ -599,6 +607,23 @@ function lintSession(root, id, { quick }) {
     }
   }
 
+  // L20 GATE-AUTHORSHIP — each gate is set by its OWN actor (Rule 10). A GATE_SET whose by=<ACTOR>
+  // disagrees with the gate's role suffix is a forged sign-off (one actor flipping the other's
+  // agreement gate) — the rubber-stamp vector §4 guards against. `\bby=` matches only the standalone
+  // author token; the leading `_` in justified_by=/relayed_by= blocks the word boundary.
+  if (head.byRole.PRIMARY && head.byRole.SECONDARY) {
+    for (const e of events) {
+      if (e.type !== "GATE_SET") continue;
+      const g = e.rest.match(/^(\w*?_(PRIMARY|SECONDARY))=YES/);
+      const by = e.rest.match(/\bby=(\w+)/);
+      if (g && by) {
+        const expected = head.byRole[g[2]]?.name;
+        if (expected && by[1] !== expected)
+          add("FAIL", "L20", `GATE_SET ${g[1]} by=${by[1]} but ${g[2]} is ${expected} (Rule 10: each gate set by its own actor)`);
+      }
+    }
+  }
+
   // L16 CATALOG-SYNC
   const idx = path.join(collabDir(root), "index.md");
   if (exists(idx)) {
@@ -628,6 +653,17 @@ function projectLog(events, names) {
         if (m && names.includes(m[1])) hands[m[1]] = m[3];
         m = t.match(/^seq=(\d+)$/); if (m) seq = Number(m[1]);
       }
+    } else if (e.type === "STALL_HANDOFF") {
+      // Rule 5 recovery: force the stalled actor ON_HOLD and the next= actor to START. Carries seq=
+      // like a HANDOFF (it IS the hand-flip event for the stall case) — must be replayed, or a legal
+      // recovery diverges from HEAD under L2.
+      activated = true;
+      const st = e.rest.match(/\bstalled=(\w+)/);
+      const nx = e.rest.match(/\bnext=[^/\s]+\/(\w+)/);
+      const sq = e.rest.match(/\bseq=(\d+)/);
+      if (st && names.includes(st[1])) hands[st[1]] = "ON_HOLD";
+      if (nx && names.includes(nx[1])) hands[nx[1]] = "START";
+      if (sq) seq = Number(sq[1]);
     } else if (e.type === "GATE_SET") {
       const m = e.rest.match(/^(\w+)=YES/); if (m && m[1] in gates) gates[m[1]] = "YES";
     } else if (e.type === "PHASE_SET") {

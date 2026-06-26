@@ -169,5 +169,42 @@ console.log("collab-board self-test\n");
   ok("terminated session w/ stale mirrors → no L15", !has(lint(root, id).out, "L15"));
 }
 
+// 11. STALL_HANDOFF (Rule 5 recovery) must replay in the L2 projection — following the protocol's own
+//     recovery path must not diverge from HEAD. (Audit fix: projectLog had no STALL_HANDOFF case.)
+{
+  const { root, id, dir } = scaffold();
+  edit(file(dir, "HEAD.md"), (t) => t
+    .replace("SESSION_STATUS: IDLE", "SESSION_STATUS: ACTIVE")
+    .replace("- CLAUDE: ON_HOLD - PRIMARY", "- CLAUDE: START - PRIMARY")
+    .replace("SEQ: 0", "SEQ: 2"));
+  edit(file(dir, "log.md"), (t) => t.trimEnd() +
+    "\n2026-01-01T00:00:00Z STATE_SET CLAUDE=WORKING CODEX=ON_HOLD cursor=- next=P1/CLAUDE seq=0" +
+    "\n2026-01-01T00:00:01Z HANDOFF CLAUDE:WORKING->ON_HOLD CODEX:ON_HOLD->START next=P2/CODEX seq=1" +
+    "\n2026-01-01T00:00:02Z STALL_HANDOFF stalled=CODEX next=P3/CLAUDE seq=2\n");
+  ok("STALL_HANDOFF recovery projects clean (no L2)", !has(lint(root, id).out, "L2"));
+}
+
+// 12. L20 GATE-AUTHORSHIP — a forged gate (one actor flipping the other's agreement) must FAIL (Rule 10).
+{
+  const { root, id, dir } = scaffold();
+  edit(file(dir, "log.md"), (t) => t.trimEnd() +
+    "\n2026-01-01T00:00:00Z GATE_SET PLAN_AGREE_PRIMARY=YES by=CODEX justified_by=P1\n");
+  ok("forged gate (PRIMARY gate set by=CODEX) → L20 FAIL", has(lint(root, id).out, "L20"));
+}
+
+// 13. new/reset must reject PRIMARY==SECONDARY (they'd collapse to one actor and lint clean otherwise).
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cb-selftest-"));
+  const r = run(["new", "--type", "META", "--primary", "Sage", "--secondary", "sage", "--adapter", "manual"], root);
+  ok("new rejects PRIMARY==SECONDARY (non-zero exit)", r.code !== 0 && /distinct/i.test(r.out));
+}
+
+// 14. A lowercase point id must be flagged malformed (L4), never silently dropped from the OPEN count.
+{
+  const { root, id, dir } = scaffold();
+  edit(file(dir, "points.md"), (t) => t.trimEnd() + "\n| p1 | PLAN | lower | OPEN |  |\n");
+  ok("lowercase point id → L4 malformed (not silently dropped)", has(lint(root, id).out, "L4"));
+}
+
 console.log(`\n${failed ? "FAIL" : "PASS"}: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

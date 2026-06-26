@@ -81,7 +81,9 @@ committed tooling. See the README for the full install story.
    `<date>-<slug>`).
 3. **Fill the contract**: edit `sessions/<id>/SESSION.md` `Topic` / `Goal` / `Done` (Rule 2).
    This file is write-once.
-4. **Open TURN-P1** (you are PRIMARY at `START`). Take your turn (below), then hand off.
+4. **Open TURN-P1.** A fresh board is `IDLE` with *both* hands `ON_HOLD`; the PRIMARY's first turn
+   self-activates from `ON_HOLD` (the one turn that doesn't enter from `START` — see the bootstrap
+   note below). Take your turn (below), then hand off.
 
 ## What to read for a turn (bounded — the whole point)
 
@@ -185,4 +187,4 @@ manual` or `subagent:<name>`; both `new` and `lint` enforce this.
 - `references/adapters.md` — the SecondaryAdapter interface and the `codex` / `subagent` /
   `manual` implementations, with the exact `codex:codex-rescue` spawn recipe and scoped-prompt
   skeleton. **Read when delegating a secondary turn.**
-- `references/lint-spec.md` — each lint check (L1–L19), its severity, and the rule it enforces.
+- `references/lint-spec.md` — each lint check (L1–L20; L17 retired), its severity, and the rule it enforces.

@@ -126,6 +126,11 @@ Valid hand-states: `START` · `WORKING` · `ON_HOLD` · `DONE`.
   logs `PHASE_SET PLAN->IMPL`, sets `HEAD.PHASE: IMPL`, and hands `START` to the PRIMARY for
   `TURN-I1`, since only the PRIMARY implements — Rule 7). The bundled `advance` command enforces
   these preconditions.
+- **The `advance` crossing is a shard-less engine transition.** It writes no `turn/v1` shard and so
+  has no `Handoff` line (§5's `Handoff` requirement applies to turn shards only); the PRIMARY keeps
+  `START` across it rather than handing off. The deciding `PLAN_AGREE` is normally the SECONDARY's; if
+  the PRIMARY casts it, that attestation (above) belongs on the PRIMARY's own preceding agreement turn
+  — it is **not** folded into `advance`.
 - `IMPL` ends when both `IMPL_AGREE_* = YES` and the session is set `COMPLETED`.
 
 ---

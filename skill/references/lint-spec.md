@@ -15,12 +15,13 @@ Authoritative sources, by field:
 
 | Code | Severity | Rule | Checks |
 |------|----------|------|--------|
-| L1 SPLIT-STATE | FAIL | 1 | A full State-section assignment `- <ACTOR>: <HAND> - <ROLE>` appears in any file other than `HEAD.md`. (Anchored on the trailing ` - <ROLE>`, so prose/notes bullets, `SELF_HAND:` mirrors, and turn Handoff lines don't match.) |
-| L2 PROJECTION | FAIL | 1,4,10 | Replay `log.md` (OPEN/STATE_SET/HANDOFF/GATE_SET/PHASE_SET/TERMINAL) → recompute hands, phase, gates, SEQ → assert equal to `HEAD.md`. Divergence means `HEAD` is corrupt; the log wins. Skipped under `--quick`. |
-| L3 DUAL-START | FAIL | 4 | While `SESSION_STATUS=ACTIVE`, exactly one hand is in {START,WORKING}; hand tokens are valid; `NEXT_ACTOR` equals that holder. |
+| L0 PRECONDITION | FAIL | — | The session directory has no `HEAD.md` — there is nothing to verify, so lint reports this and stops (no other checks run for that session). |
+| L1 SPLIT-STATE | FAIL | 1 | A full State-section assignment `- <ACTOR>: <HAND> - <ROLE>` appears in any file other than `HEAD.md`. (Anchored on the trailing ` - <ROLE>`, so prose/notes bullets, `SELF_HAND:` mirrors, and turn Handoff lines don't match.) Also FAILs if `HEAD.md ## State` lists the same actor name twice — PRIMARY and SECONDARY must be distinct. |
+| L2 PROJECTION | FAIL | 1,4 | Replay `log.md` (OPEN/STATE_SET/HANDOFF/STALL_HANDOFF/GATE_SET/PHASE_SET/TERMINAL) → recompute hands, phase, gates, SEQ → assert equal to `HEAD.md`. `STALL_HANDOFF` flips the stalled actor to `ON_HOLD` and the `next=` actor to `START` (it carries `seq=`, like a handoff), so a Rule 5 recovery replays cleanly. Divergence means `HEAD` is corrupt; the log wins. Skipped under `--quick`. |
+| L3 DUAL-START | FAIL | 4 | While `SESSION_STATUS=ACTIVE`, exactly one hand is in {START,WORKING}; hand tokens are valid; `NEXT_ACTOR` equals that holder. Also emits a **WARN** (advisory) if an `IDLE` session has any `START`/`WORKING` hand. |
 | L4 PLAN-GATE | FAIL | 3,10 | `PLAN_OPEN_POINTS` equals the actual count of `OPEN` `P*` rows. If `PHASE=IMPL`: that count is 0, both `PLAN_AGREE_*=YES`, and `plan/context.md` is a real digest (not `STATUS: EMPTY`). Also: any `\| <id> \|`-shaped point row that fails to parse cleanly (e.g. missing trailing pipe) is a FAIL — an unparseable OPEN point must never be silently treated as resolved. |
 | L5 IMPL-BEFORE-GATE | FAIL | 3 | Any `I*` turn shard / `TURN_COMMIT` exists but there is no prior `PHASE_SET PLAN->IMPL` in the log. |
-| L6 IMPL-AUTHORITY | FAIL | 7 | A SECONDARY impl turn carries real `BRANCH/BASE/LATEST` or claims project edits. A PRIMARY impl turn leaves any of `BRANCH/BASE_COMMIT/LATEST_COMMIT` at the `—`/`-` placeholder (in `impl/code_state.md` or the shard). The literal `NONE` is a VALID "no git / not tracked" value — a non-git repo, or before the first commit — and passes. |
+| L6 IMPL-AUTHORITY | FAIL | 7 | A SECONDARY impl turn carries a real `BRANCH` or `LATEST_COMMIT` (the markers that it authored code — review-only turns omit the `Impl:` line). A PRIMARY impl turn leaves any of `BRANCH/BASE_COMMIT/LATEST_COMMIT` at the `—`/`-` placeholder (in `impl/code_state.md` or the shard). The literal `NONE` is a VALID "no git / not tracked" value — a non-git repo, or before the first commit — and passes. |
 | L7 CONTRACT | FAIL | 2 | `P1` exists but `SESSION.md` still has `Topic`/`Goal`/`Done` = `—`. |
 | L8 ACK | WARN | 2 | The secondary's first turn body does not mention `ACK` of the contract. |
 | L9 STALL | WARN | 5 | `now − LAST_UPDATE > CHECK` → WARN; `> CHECK+HANDOFF` with no `STALL_HANDOFF` logged → WARN (advisory only — a paused-but-healthy board must not hard-FAIL; if the owed actor is truly silent, log `STALL_HANDOFF` and force the handoff). Timers from `SESSION.Stall`. |
@@ -33,6 +34,9 @@ Authoritative sources, by field:
 | L16 CATALOG-SYNC | WARN | catalog | The `index.md` row for this session disagrees with `HEAD` on Status/Phase. Reconciled to `ACTIVE` by `activate` on the first turn, and by `advance`/`terminal`/`reset` thereafter. |
 | L18 CODEX-ADAPTER | FAIL | adapter | `SecondaryAdapter: codex` but `Roles` are not `PRIMARY=CLAUDE, SECONDARY=CODEX` — the codex plugin runs inside Claude Code, so the codex adapter is valid only for that pairing. |
 | L19 EVIDENCE-ON-RESOLVE | WARN | evidence | A turn that **resolves** a point (a `POINT_SET` to a non-`OPEN` status in the log) has an `- Evidence:` line whose inline value is literally `N/A`. Advisory only (never FAIL): a resolved decision should cite resolvable evidence (`file:line`, command/test output, doc/URL). Whether a claim is "disputed" is prose guidance, not lintable — L19 flags only the explicit empty-evidence token, never judges content. Reinforces "challenge and ask with evidence"; mutual agreement is not verification. |
+| L20 GATE-AUTHORSHIP | FAIL | 10 | A `GATE_SET` whose `by=<ACTOR>` disagrees with the gate's role suffix (`*_PRIMARY`/`*_SECONDARY`) — i.e. one actor flipping the other's agreement gate (a forged sign-off). Each gate is set by its own actor; this is the machine-checkable half of the §4 anti-rubber-stamp norm (`justified_by=`/`relayed_by=` are not matched). |
+
+*(L17 — formerly `EXPECT≠PHASE` — was retired when `HEAD.EXPECT` was removed in a hardening pass; the id is intentionally not reused, hence the L16→L18 gap.)*
 
 **Remediation, in general:** a `FAIL` means a write step was skipped or done out of order.
 Because `HEAD.md` is written last and the `HANDOFF` log line is the commit point, an

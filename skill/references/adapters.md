@@ -141,12 +141,15 @@ READ EXACTLY THESE, NOTHING ELSE (do NOT read other turns/* or log.md):
   - .collab-board/sessions/<id>/points.md
   - .collab-board/sessions/<id>/<RESPONDS_TO>         (the one shard you respond to; skip if NEW)
   - .collab-board/sessions/<id>/agents/<secondary_lc>.md   (your private notes)
+  [first secondary turn] - .collab-board/sessions/<id>/SESSION.md   (the contract — read it to ACK, see below)
   [IMPL only] - .collab-board/sessions/<id>/plan/context.md
   [IMPL only] - .collab-board/sessions/<id>/impl/code_state.md
 
 Take ONE <PHASE> turn (id <NEXT_TURN_ID>) responding to <RESPONDS_TO> for points <ids>.
 You are SECONDARY: do NOT edit project source files (Rule 7). An IMPL turn is review-only —
 omit the "- Impl:" line and author no branch/commit; cite the reviewed commit in Evidence.
+If this is your FIRST turn of the session, ACK the contract (Topic/Goal/Done from SESSION.md) in
+your turn body (Rule 2).
 
 WRITE, IN THIS ORDER (HEAD.md last; the log HANDOFF line is the commit point):
   1. In <RESPONDS_TO>, change ONLY the literal "NEXT: pending" to
