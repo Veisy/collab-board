@@ -18,7 +18,11 @@ around.
 
 - **Adversarial but open.** Each agent reviews the other skeptically — treat a claim as
   unproven until its evidence holds — yet stays genuinely open to a better idea and concedes
-  plainly when the other is right. The goal is the best answer, not winning the turn.
+  plainly when the other is right. The goal is the best answer, not winning the turn. *Find
+  faults before you agree; hold your position unless given a substantive technical reason;
+  never concede merely to agree.* Mutual agreement is **not** verification — two models can
+  share a blind spot and converge on the same wrong answer — so back a resolution with evidence
+  (and, in IMPL, an executable check where one exists), not with assent.
 - **Occam's razor.** Prefer the simplest solution that fully solves the problem: as simple
   as possible, as complex as necessary. When two solutions are of similar quality, the
   simpler one wins — the burden of proof is on the added complexity.
@@ -26,7 +30,11 @@ around.
   other agent the questions you actually need answered to understand the problem before you
   propose.
 - **Escalate when jointly unsure.** If, after exchanging evidence, *both* agents are still
-  unsure, escalate to the user (Rule 9, `USER_QUESTION:`) instead of guessing.
+  unsure, escalate to the user (Rule 9, `USER_QUESTION:`) instead of guessing. Persistent,
+  *evidence-backed* disagreement that neither side can resolve is itself grounds to escalate —
+  don't let a confident assertion settle it, since self-reported certainty tracks neither
+  correctness nor independence (it tends to *rise* under disagreement). This stays a judgment
+  call, never automatic: at a hard per-point deadlock the PRIMARY still decides (Rule 6).
 - **Stay lean — this is a board, not a history book.** Record only what a future turn or the
   audit genuinely needs. Turn bodies carry signal, not transcripts; the log carries events,
   not prose; points capture decisions, not chatter. Brevity is what keeps every agent's
@@ -101,6 +109,15 @@ Valid hand-states: `START` · `WORKING` · `ON_HOLD` · `DONE`.
 - During `PLAN`, agents converge a plan. Each agent records its own agreement in
   `HEAD ## Gates`: `PLAN_AGREE_PRIMARY` / `PLAN_AGREE_SECONDARY` (`NO`→`YES`), logged with a
   `GATE_SET` line.
+- **Agreeing is an attestation, not a reflex.** Before an agent sets *its own* gate to `YES`
+  (`PLAN_AGREE_*` or `IMPL_AGREE_*`), its turn must state EITHER the substantive challenge(s) it
+  raised this session OR, explicitly, what it checked and why no defensible objection remains. A
+  gate flipped with no recorded scrutiny is the rubber-stamp failure this protocol exists to
+  prevent. (A turn-body norm, not a lint check.)
+- **Anchor IMPL agreement on external verification where one exists.** Mutual `AGREE` is not
+  proof of correctness. When the project code has an executable verifier (tests, build,
+  type-check, lint), an `IMPL_AGREE_*` turn should cite that result in its `Evidence`, not rest
+  on both agents agreeing.
 - The phase advances to `IMPL` **only** when: every `P*` point is non-`OPEN`
   (`PLAN_OPEN_POINTS: 0`), **and** both `PLAN_AGREE_* = YES`, **and** `plan/context.md`
   holds a real digest (not the `STATUS: EMPTY` placeholder). The transition is the **PRIMARY's**
@@ -137,7 +154,15 @@ Rules for shards:
   this shard's `NEXT: pending` to `NEXT: [<next-id>](<next-id>-<actor>.md)` to keep the
   chain doubly-linked.
 - **Disputed claims need evidence** (≥1 of: `file:line`, test output, doc ref, or explicit
-  step-by-step reasoning).
+  step-by-step reasoning). A turn that **resolves** a point (sets it to a non-`OPEN` status)
+  should carry resolvable evidence for that resolution; `Evidence: N/A` on a resolving turn
+  draws lint **L19** (a WARN, not a block). Whether a claim is "disputed" is a judgment for the
+  author, not the linter.
+- **Preserve dissent.** When a turn resolves a point by overriding or conceding a recorded
+  objection, add a one-line `- DISSENT: <the minority view + why it was overruled>` to the Body
+  (optional — omit when there was no objection). Recording the losing position guards against
+  silent/sycophantic consensus collapse. Keep it to one line; it lives in the resolving turn,
+  never in `points.md` or the log.
 - A **PRIMARY** IMPL turn adds a line `- Impl: BRANCH=<b> BASE_COMMIT=<c> LATEST_COMMIT=<c>`
   echoing `impl/code_state.md`. A **SECONDARY** IMPL turn is **review-only**: it omits the
   `- Impl:` line entirely and authors no branch/commit (Rule 7) — cite the reviewed commit in
@@ -183,8 +208,12 @@ Rules for shards:
 8. **Terminal.** `COMPLETED`/`ABORTED` sets both hands `DONE`; no new turns after.
 9. **User escalation.** Either actor may ask the user (project owner) when an answer cannot
    be found in the codebase, docs, or web search **and, after exchanging evidence, both agents
-   remain unsure** (don't escalate unilaterally — challenge and ask each other first). Tag
-   `USER_QUESTION:` in the turn body and log a `USER_QUESTION` line.
+   remain unsure** (don't escalate unilaterally — challenge and ask each other first), **or**
+   when a substantive *evidence-backed* disagreement persists that neither side can resolve. Do
+   not let self-reported confidence settle such a dispute — stated certainty tracks neither
+   correctness nor independence. This stays a judgment call, never automatic: at a hard
+   per-point deadlock the PRIMARY still decides (Rule 6). Tag `USER_QUESTION:` in the turn body
+   and log a `USER_QUESTION` line.
 10. **Gates.** `PLAN_AGREE_*` / `IMPL_AGREE_*` live in `HEAD ## Gates`, each set by its own
     actor during its own turn and logged `GATE_SET`.
 

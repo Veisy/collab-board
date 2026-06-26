@@ -21,11 +21,15 @@ yourself, and *delegate* each SECONDARY turn to the other model through its adap
 ## Collaboration principles (carry these into every turn)
 
 - **Adversarial but open** — review the other skeptically (claims are unproven until their
-  evidence holds), yet concede plainly when they're right. The goal is the best answer.
+  evidence holds), yet concede plainly when they're right. The goal is the best answer. Find
+  faults before agreeing; hold your position unless given a substantive technical reason; never
+  concede merely to agree. Mutual agreement is **not** verification (§0, §4).
 - **Occam's razor** — simplest solution that fully works; when two are similar, simpler wins.
 - **Challenge and ask** — disagree with evidence; ask the questions you need answered.
 - **Escalate when jointly unsure** — if both agents are unsure after exchanging evidence, ask
-  the user (`USER_QUESTION:`), don't guess.
+  the user (`USER_QUESTION:`), don't guess. A persistent evidence-backed disagreement neither
+  can resolve is itself grounds to escalate; don't let stated confidence settle it (at a hard
+  deadlock the PRIMARY still decides, Rule 6).
 - **Stay lean** — a board, not a history book; record only what a future turn or the audit
   needs.
 
@@ -104,15 +108,18 @@ crash leaves a detectable orphan, not corrupted state. In order:
 1. If the predecessor shard's `NEXT:` is `pending`, change only that token to a link to your
    new shard.
 2. **Create** `turns/<NEXT_TURN_ID>-<you>.md` following the `turn/v1` format (Header · Body
-   FINDINGS/CHALLENGE/PROPOSAL · Evidence · Handoff · PREV/NEXT). Keep it lean. For an IMPL
-   turn (PRIMARY only) add the `- Impl: BRANCH=… BASE_COMMIT=… LATEST_COMMIT=…` line — a
-  SECONDARY review turn omits it.
+   FINDINGS/CHALLENGE/PROPOSAL · Evidence · Handoff · PREV/NEXT). Keep it lean. A turn that
+   *resolves* a point should carry real `Evidence` (`Evidence: N/A` on a resolving turn → lint
+   `L19` WARN); if it resolves a point *against* a recorded objection, add a one-line
+   `- DISSENT:` (§5). For an IMPL turn (PRIMARY only) add the
+   `- Impl: BRANCH=… BASE_COMMIT=… LATEST_COMMIT=…` line — a SECONDARY review turn omits it.
 3. **Update** `points.md` for any point you open/resolve (link `Resolved In` to your shard).
 4. **Append** to `log.md`: a `TURN_COMMIT` line (+ `POINT_SET` if points changed). See
    `PROTOCOL.md §8` for the exact grammar.
 5. **Update** your `agents/<you>.md` (`SELF_HAND`, `LAST_TURN_WRITTEN`, private notes).
 6. **Update** `HEAD.md` (atomically — overwrite the whole file): flip `## State` (you
-   `WORKING→ON_HOLD`, other `ON_HOLD→START`); set your gate in `## Gates` if you agreed;
+   `WORKING→ON_HOLD`, other `ON_HOLD→START`); set your gate in `## Gates` if you agreed —
+   but only once your turn body states your challenge(s) or why no objection remains (§4);
    update `## Cursor` (`TURN_CURSOR`, `RESPONDS_TO`, `NEXT_TURN_ID`, `NEXT_ACTOR`, `SEQ`+1);
    refresh `PLAN_OPEN_POINTS`; set `LAST_UPDATE`.
 7. **Append** the `HANDOFF` line to `log.md` (the commit point).
@@ -178,4 +185,4 @@ manual` or `subagent:<name>`; both `new` and `lint` enforce this.
 - `references/adapters.md` — the SecondaryAdapter interface and the `codex` / `subagent` /
   `manual` implementations, with the exact `codex:codex-rescue` spawn recipe and scoped-prompt
   skeleton. **Read when delegating a secondary turn.**
-- `references/lint-spec.md` — each lint check (L1–L18), its severity, and the rule it enforces.
+- `references/lint-spec.md` — each lint check (L1–L19), its severity, and the rule it enforces.

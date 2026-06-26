@@ -564,16 +564,38 @@ function lintSession(root, id, { quick }) {
       add("FAIL", "L14", `${f} PREV target missing: ${prev[1]}`);
   }
 
-  // L15 MIRROR-DRIFT — skip the actor currently at START: it set SELF_HAND=ON_HOLD when it ended
-  // its previous turn and has not acted yet, so its mirror is legitimately stale and would WARN
-  // after every clean handoff. L3 (DUAL-START) guarantees at most one START holder, so a genuinely
-  // stale mirror on an ON_HOLD/WORKING actor is still caught.
+  // L15 MIRROR-DRIFT — skip actors at START or DONE; their mirrors are legitimately stale. A START
+  // holder set SELF_HAND=ON_HOLD ending its previous turn and has not acted yet, so its mirror would
+  // WARN after every clean handoff. A DONE actor was flipped to DONE by `terminal` (an engine action,
+  // not a turn, so the mirror can't have updated) and a terminated session takes no more turns, so the
+  // drift is moot. L3 (DUAL-START) guarantees at most one START holder, so a genuinely stale mirror on
+  // an ON_HOLD/WORKING actor is still caught.
   for (const s of head.state) {
-    if (s.hand === "START") continue;
+    if (s.hand === "START" || s.hand === "DONE") continue;
     const af = path.join(dir, "agents", `${s.name.toLowerCase()}.md`);
     if (exists(af)) {
       const sh = getKV(readText(af), "SELF_HAND");
       if (sh && sh !== s.hand) add("WARN", "L15", `agents/${s.name.toLowerCase()}.md SELF_HAND=${sh} ≠ HEAD ${s.hand}`);
+    }
+  }
+
+  // L19 EVIDENCE-ON-RESOLVE — a turn that RESOLVES a point (a POINT_SET to a non-OPEN status) should
+  // carry resolvable evidence. WARN (advisory, never FAIL) when such a turn's `- Evidence:` line is
+  // literally `N/A`. Whether a claim is "disputed" is prose guidance, not lintable, so we flag only the
+  // explicit empty-evidence token and never judge content (mutual agreement is not verification).
+  {
+    const resolving = new Set();
+    for (const e of events) {
+      if (e.type !== "POINT_SET") continue;
+      const inM = e.rest.match(/\bin=([PI]\d+)\b/);
+      if (inM && /\b[PI]\d+=(AGREED|REJECTED|DEFERRED|OUT_OF_SCOPE)\b/.test(e.rest)) resolving.add(inM[1]);
+    }
+    for (const tid of resolving) {
+      const f = turnFiles.find((x) => x.startsWith(tid + "-"));
+      if (!f) continue;
+      const ev = readText(path.join(turnsDir, f)).match(/^-\s*Evidence:\s*(.*)$/m);
+      if (ev && /^N\/A$/i.test(ev[1].trim()))
+        add("WARN", "L19", `${f} resolves a point but Evidence: N/A — cite file:line / command output / doc, or state why none applies`);
     }
   }
 

@@ -39,6 +39,22 @@ const read = (p) => fs.readFileSync(p, "utf8");
 const write = (p, s) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, s); };
 const edit = (p, fn) => write(p, fn(read(p)));
 
+// Preflight: this harness drives the REAL CLI via nested `node` child processes. Some sandboxes
+// (e.g. a workspace-write SECONDARY like the codex adapter) block spawning nested processes —
+// execFileSync then returns status=null with empty output, which would surface as a confusing
+// "scaffold failed". Detect that up front and SKIP cleanly (exit 0) so a sandboxed reviewer gets a
+// clear signal instead of a false failure. A normal run probes OK and executes every assertion.
+function canSpawnNode() {
+  try { return execFileSync(process.execPath, ["-e", "process.stdout.write('cb-ok')"], { encoding: "utf8" }).trim() === "cb-ok"; }
+  catch { return false; }
+}
+if (!canSpawnNode()) {
+  console.log("SKIP: this environment blocks nested Node process spawning (e.g. a sandboxed runner).");
+  console.log("      The self-test drives the real CLI as a child process, so it cannot run here —");
+  console.log("      run it in an unsandboxed environment. `lint --all` remains the production invariant.");
+  process.exit(0);
+}
+
 console.log("collab-board self-test\n");
 
 // 1. A freshly scaffolded board is clean (exit 0, no FAIL findings).
@@ -120,6 +136,37 @@ console.log("collab-board self-test\n");
   ok("before activate: catalog drift → L16", has(lint(root, id).out, "L16"));
   run(["activate", "--session", id], root);
   ok("after activate: catalog reconciled (no L16)", !has(lint(root, id).out, "L16"));
+}
+
+// 9. L19 EVIDENCE-ON-RESOLVE (this hardening pass) — a turn that RESOLVES a point with `Evidence: N/A`
+//    WARNs (advisory); the same turn with real evidence does not. Whether a claim is "disputed" stays
+//    prose-only — we flag only the literal empty-evidence token on a resolving turn.
+{
+  const { root, id, dir } = scaffold();
+  const shard = (ev) =>
+    "### TURN-P1 (CLAUDE)\nSCHEMA: collab-board/turn/v1\n- Header: PART=PLAN · RESPONDS_TO=NEW · POINTS=P1\n" +
+    "- Body:\n  - FINDINGS: x\n  - CHALLENGE: N/A\n  - PROPOSAL: x\n- Evidence: " + ev +
+    "\n- Handoff: CLAUDE WORKING->ON_HOLD, CODEX ON_HOLD->START\nPREV: NEW\nNEXT: pending\n";
+  write(file(dir, "turns", "P1-claude.md"), shard("N/A"));
+  edit(file(dir, "log.md"), (t) => t.trimEnd() +
+    "\n2026-01-01T00:00:00Z TURN_COMMIT P1 actor=CLAUDE responds_to=NEW points=P1" +
+    "\n2026-01-01T00:00:00Z POINT_SET P1=AGREED in=P1\n");
+  ok("resolving turn w/ Evidence: N/A → L19 WARN", has(lint(root, id).out, "L19"));
+  edit(file(dir, "turns", "P1-claude.md"), (t) => t.replace("- Evidence: N/A", "- Evidence: foo.js:42 (verified)"));
+  ok("resolving turn w/ real evidence → no L19", !has(lint(root, id).out, "L19"));
+}
+
+// 10. L15 on a TERMINATED session — both hands DONE with stale ON_HOLD mirrors must NOT warn.
+//     `terminal` flips hands via the engine (not a turn), so mirrors can't update; a terminated
+//     session takes no more turns, so the drift is moot. Regression guard for the START-and-DONE skip.
+{
+  const { root, id, dir } = scaffold();
+  edit(file(dir, "HEAD.md"), (t) => t
+    .replace("SESSION_STATUS: IDLE", "SESSION_STATUS: COMPLETED")
+    .replace("- CLAUDE: ON_HOLD - PRIMARY", "- CLAUDE: DONE - PRIMARY")
+    .replace("- CODEX: ON_HOLD - SECONDARY", "- CODEX: DONE - SECONDARY"));
+  // agents/*.md mirrors stay at the scaffold default SELF_HAND: ON_HOLD (stale vs DONE) — must not warn.
+  ok("terminated session w/ stale mirrors → no L15", !has(lint(root, id).out, "L15"));
 }
 
 console.log(`\n${failed ? "FAIL" : "PASS"}: ${passed} passed, ${failed} failed`);
