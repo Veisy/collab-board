@@ -1,4 +1,4 @@
-# This repo is the agent-neutral SOURCE of the collab-board toolkit.
+# This repo is the SOURCE of the collab-board skill (installed into a project's .claude/ by install.mjs).
 
 # Installed tooling (produced from skill/ by install.mjs — install per project instead)
 .claude/

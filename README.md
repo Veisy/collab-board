@@ -1,117 +1,127 @@
 # collab-board
 
-A portable, **agent-neutral toolkit** that makes two AI models collaborate on a coding task in
-strict, alternating turns — a **PRIMARY** and a **SECONDARY** (default: **Claude + Codex**, with
-Codex driven from *inside* Claude via the `codex@openai-codex` plugin — no second terminal or app).
-The engine is plain Node + Markdown and drops into any project with one command.
+Two AI models, one task, strict alternating turns. **collab-board** has a **PRIMARY** model and a
+**SECONDARY** model plan a task together, agree, then build it together — each skeptically reviewing
+the other — so you get a result neither reaches alone. The default pair is **Claude + Codex** (Codex
+runs from inside Claude via the `codex@openai-codex` plugin), but the same board coordinates any two
+models. It's plain Node + Markdown and installs into a project with one command.
 
-Each session runs a **PLAN** phase (converge, then agree) and an **IMPLEMENTATION** phase, tracking
-decisions as points and gating each phase. The board is **not one growing file** — it's a small tree
-of interlinked Markdown files, so every turn reads only the few it needs and context stays bounded no
-matter how long the collaboration runs.
+The task can be anything with reviewable decisions or output — a feature, a bug fix, a refactor, an
+investigation, a design — not just coding.
+
+The board is **not one growing file.** Each session is a small tree of interlinked Markdown files, so
+a model taking a turn reads only the few it needs and its context stays small no matter how long the
+collaboration runs.
+
+```text
+/collab-new REFACTOR readme   # scaffold a session, fill the contract, open the PLAN phase
+/collab-status                # list sessions, whose turn it is, and check results
+/collab-continue [id]         # resume a session exactly where it left off
+/collab-install               # copy the tooling into the current project's .claude/
+```
 
 ## Why two models
 
-A single model has blind spots and can state a wrong answer with complete confidence. Pairing two
-*different* models turns that into a safeguard: each has to back its claims with evidence and survive
-the other's skeptical review, so hallucinations get caught and gaps get filled before any decision
-sticks — a more reliable result than either model reaches alone.
+A single model has blind spots and can state a wrong answer with total confidence. collab-board turns
+that into a safeguard, two ways:
 
-## What it's good for
+- **Two *different* models cross-check each other.** Each has to back its claims with evidence and
+  survive the other's skeptical review, so blind spots and confidently-wrong answers get caught far
+  more often than either model manages alone.
+- **Every decision is approved before the next one builds on it.** Work moves in strict turns through
+  gated **PLAN** and **IMPLEMENTATION** phases, and a phase can't advance until *both* models have
+  signed off and every open question is resolved. That keeps a wrong call from quietly becoming the
+  foundation later work piles onto — small mistakes get caught while they're still small, instead of
+  compounding and spiraling as the task grows.
 
-- Two AIs **co-designing then co-implementing** a feature/fix/refactor with skeptical peer review.
-- Keeping a long collaboration's **per-turn context small** — no re-reading the whole history.
-- A clean, lintable **audit trail** of who decided what, and why.
-- Built-in principles: adversarial-but-open review · Occam's razor · challenge & ask · escalate to
-  the user only when *both* are unsure · keep the board lean.
+This *reduces* error; it doesn't eliminate it — two models can still share a blind spot. So
+collab-board anchors agreement on evidence, and in the build phase on an executable check where one
+exists, rather than on the two models simply agreeing.
 
-## How it runs: connected, or human-relayed
+## How it runs
 
-Both agents need a channel to pass turns. Two modes — **same board, same protocol, same lint; only
-the hand-off differs**:
+Both models need a way to pass turns. There are two modes — **same board, same protocol, same checks;
+only the hand-off differs:**
 
-- **Connected (default, fully automated).** Claude (PRIMARY) drives Codex (SECONDARY) through the
-  `codex@openai-codex` plugin, entirely inside Claude Code or Claude Desktop. You give one prompt to
+- **Connected (default, fully automated).** With **Claude + Codex**, Claude is the orchestrator and
+  drives Codex through the `codex@openai-codex` plugin, all inside Claude Code. You give one prompt to
   start; Claude takes its own turns and delegates Codex's automatically, pausing only at a phase gate
-  or a question — no copy-pasting. **Claude sets this up and guides you:** it adds the plugin from the
-  Claude Code marketplace, runs `/codex:setup`, and walks you through authenticating the Codex CLI.
+  or a question — no copy-pasting. One-time setup: add the `codex@openai-codex` plugin and run
+  `/codex:setup` to authenticate the Codex CLI (Claude can walk you through it).
 
-- **Disconnected — the shared board *is* the connection.** Any other pairing (Claude + Gemini, two
-  ChatGPT windows, a local model…) needs no plugin: the board is just files under `.collab-board/`,
-  and every turn is gated + lint-checked, so an offline/async collaboration stays consistent.
-    - **Shared workspace (recommended):** point both agents at the same folder or a shared **git**
-      repo. Each runs `/collab-continue` and acts only when `HEAD.md` shows its hand at `START` —
-      reading its tiny read-set, taking its turn, and handing off. You just nudge whoever holds
-      `START` ("your turn"); each agent edits the board itself.
-    - **Pure relay (`manual` adapter):** if the secondary can't touch the filesystem (a browser-only
-      chat), the orchestrator prints a self-contained *scoped prompt* each turn; you paste it over and
-      paste the reply back, and it scribes the writes. (A write-capable Claude Code subagent can use
-      `subagent:<name>` and stay automated.)
+- **Human-relayed — the shared board *is* the connection.** Any other pair (Claude + Gemini, two
+  ChatGPT windows, a local model…) needs no plugin, because the board is just files under
+  `.collab-board/` and every turn is gated and checked, so an offline or async collaboration stays
+  consistent.
+    - **Shared workspace (recommended):** point both models at the same folder or a shared **git**
+      repo. Each runs `/collab-continue` and acts only when the live-state file shows its hand at
+      `START` — reading its small read-set, taking its turn, and handing off. You just nudge whoever
+      holds the turn ("your turn"); each model edits the board itself.
+    - **Pure relay:** if the second model can't reach the filesystem (a browser-only chat), the
+      orchestrator prints a self-contained prompt each turn; you paste it across and paste the reply
+      back, and the orchestrator records the writes. (A write-capable subagent can stay fully
+      automated instead.)
 
 ## Install
 
-**Node 18+** is the only hard dependency, and it's cross-platform (Windows, macOS, Linux).
-
-### As an AI agent (minimal overhead)
-
-Give the agent this repo's URL and ask it to set up collab-board — it clones and runs the one-line
-installer itself:
-
-```bash
-git clone https://github.com/Veisy/collab-board && node collab-board/install.mjs --global
-```
-
-For the default **Claude + Codex** pairing, Claude also finishes the setup — it adds the
-`codex@openai-codex` plugin and runs `/codex:setup` (see
-[How it runs](#how-it-runs-connected-or-human-relayed)). Any other pairing needs no plugin.
-
-### As a human
-
-Clone the repo and run the installer; it copies the skill + `/collab-*` commands into the target's
-`.claude/` (the Claude Code layout) — no build, no dependencies:
+The only dependency is **Node.js 18+**, on Windows, macOS, or Linux.
 
 ```bash
 git clone https://github.com/Veisy/collab-board
 
-node collab-board/install.mjs /path/to/your-project   # into one project (then commit its .claude/)
+node collab-board/install.mjs /path/to/your-project   # install into one project (then commit its .claude/)
 node collab-board/install.mjs --global                # …or globally, for every project
 ```
 
-From inside a project that already has it, **`/collab-install`** re-installs or updates the copy.
+`install.mjs` copies the skill and the `/collab-*` commands into the target's `.claude/` (the Claude
+Code layout) — no build step, no dependencies. From inside a project that already has it,
+**`/collab-install`** re-installs or updates the copy.
+
+For the default **Claude + Codex** pair, also add the `codex@openai-codex` plugin and run
+`/codex:setup` once to authenticate Codex. Any other pair needs no plugin.
 
 ## Use it
 
 ```text
-/collab-new FEATURE jwt-auth   # scaffold a clean session, fill the contract, open PLAN
-/collab-status                 # list sessions + lint findings; see whose turn it is
-/collab-continue [id]          # resume a session exactly where it left off
-/collab-install                # copy the tooling into the current project's .claude/
+/collab-new <TYPE> <slug>   # scaffold a clean session and open PLAN
+                            #   TYPE = FEATURE | BUG_FIX | REFACTOR | INVESTIGATION | META
+/collab-status              # list sessions + check results; see whose turn it is
+/collab-continue [id]       # resume a session exactly where it left off
+/collab-install             # copy the tooling into the current project's .claude/
 ```
 
-`/collab-new` creates the board on first use; in connected mode you then just let Claude drive the
-turn loop until a phase gate or a question needs you.
+`/collab-new` creates the board on first use. In connected mode you then let Claude drive the turn
+loop until a phase gate or a question needs you.
 
 ## Layout
 
-The repo is the agent-neutral **source**:
+This repo is the **source**; the skill under `skill/` is what gets installed:
 
 ```
-install.mjs            # one-command installer
-skill/                 # the portable toolkit
+install.mjs            # one-command installer (forwards to skill/scripts/install.mjs)
+skill/                 # the installable skill
 ├── SKILL.md  references/  templates/  commands/collab-*.md
 └── scripts/           # collab-board.mjs (the engine, plain Node) + install.mjs + test.mjs
 ```
 
-The installer **generates** (both git-ignored in this source repo): `.claude/` — the Claude Code
-integration, which you commit in a *target* project so the team gets the tooling; and, at runtime via
-`/collab-new`, `.collab-board/` — session data (`HEAD.md` live state · `log.md` ledger · `points.md` ·
-`plan/` · `impl/` · `agents/` · `turns/<id>-<actor>.md`).
+Two directories are **generated** and git-ignored in this source repo:
+
+- **`.claude/`** — the installed tooling, produced from `skill/` by the installer. Commit it in a
+  *target* project so collaborators get the commands.
+- **`.collab-board/`** — runtime session data, created by `/collab-new`: a live-state file
+  (`HEAD.md`), an append-only event log (`log.md`), the point tracker (`points.md`), the frozen plan,
+  and the immutable per-turn notes.
 
 ## For AI agents (orchestrator quickstart)
 
-Read `.claude/skills/collab-board/SKILL.md`, then `.collab-board/PROTOCOL.md` **once**. Per turn read
-only `HEAD.md` + `points.md` + the one shard at `HEAD.RESPONDS_TO` (+ `plan/context.md` in IMPL).
-Write `HEAD.md` **last**; the `HANDOFF` log line is the commit point. After every turn run
-`node .claude/skills/collab-board/scripts/collab-board.mjs lint --session <id>` and fix any `FAIL` —
-the lint replays the append-only log to verify live state. (Working in this source repo directly? The
+Read `.claude/skills/collab-board/SKILL.md`, then `.collab-board/PROTOCOL.md` **once**. Each turn,
+read only the live-state file `HEAD.md` + `points.md` + the one prior turn it points to (plus the
+frozen `plan/context.md` during IMPL). Write `HEAD.md` **last** — the `HANDOFF` line appended to the
+log is the commit point. After every turn, run the checker and fix any failure:
+
+```bash
+node .claude/skills/collab-board/scripts/collab-board.mjs lint --session <id>
+```
+
+It replays the append-only log to verify the live state. (Working in this source repo directly? The
 engine is `skill/scripts/collab-board.mjs`.)
