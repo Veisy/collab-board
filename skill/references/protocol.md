@@ -118,6 +118,14 @@ Valid hand-states: `START` · `WORKING` · `ON_HOLD` · `DONE`.
   proof of correctness. When the project code has an executable verifier (tests, build,
   type-check, lint), an `IMPL_AGREE_*` turn should cite that result in its `Evidence`, not rest
   on both agents agreeing.
+- **Resource exhaustion is not grounds to lower the bar.** If the SECONDARY becomes unavailable
+  mid-session (a rate/usage limit — its delegation fails in a limit-shaped way, or the user says a
+  model is near its cap before a large job), it is *unavailable, not wrong to consult*. Do **not**
+  cope by degrading: never let the PRIMARY's own self-review stand in for the adversarial gate,
+  never lower a model's effort/quality, and never author ahead of an ungated backlog. The board is
+  crash-safe after every `HANDOFF`, so the moment between two confirmed turns is a **saveable
+  point** — pause there, tell the user (name the last safe cursor), and resume later. collab-board
+  cannot read a model's usage percentage; it reacts to observable signals, not a metric it lacks.
 - The phase advances to `IMPL` **only** when: every `P*` point is non-`OPEN`
   (`PLAN_OPEN_POINTS: 0`), **and** both `PLAN_AGREE_* = YES`, **and** `plan/context.md`
   holds a real digest (not the `STATUS: EMPTY` placeholder). The transition is the **PRIMARY's**
@@ -157,7 +165,9 @@ NEXT: pending
 Rules for shards:
 - **Immutable once written**, with exactly **one** allowed later edit: the next author flips
   this shard's `NEXT: pending` to `NEXT: [<next-id>](<next-id>-<actor>.md)` to keep the
-  chain doubly-linked.
+  chain doubly-linked. The next author creates its own shard *before* flipping this pointer, so a
+  crash never leaves a `NEXT` link to a missing file; lint L14 checks both `PREV` and `NEXT`
+  targets resolve.
 - **Disputed claims need evidence** (≥1 of: `file:line`, test output, doc ref, or explicit
   step-by-step reasoning). A turn that **resolves** a point (sets it to a non-`OPEN` status)
   should carry resolvable evidence for that resolution; `Evidence: N/A` on a resolving turn
@@ -245,8 +255,10 @@ verify `HEAD`. Closed event vocabulary (one event per line, `<ISO_TS>` first):
 ```
 
 The `HANDOFF` line is the commit point of a turn. `via=<adapter>` records how a SECONDARY
-turn was produced (`codex`, `subagent:<name>`, `manual`); `relayed_by=<actor>` is added when
-the PRIMARY scribed a non-write-capable secondary's turn.
+turn was produced (`codex`, `subagent:<name>`, `manual`); `relayed_by=<actor>` is added when the
+PRIMARY scribed a secondary's turn — either a non-write-capable secondary (`manual`), or a
+write-capable one (e.g. `codex`) whose sandbox blocked the board write but that returned a
+complete, concrete verdict the PRIMARY transcribes verbatim (never invents).
 
 ---
 
@@ -267,6 +279,13 @@ per §5 and are never scaffolded. The authoritative field set:
   plugin inside Claude Code), so other pairings use `manual` or `subagent:<name>`.
 - **points/v1**, **log/v1**, **context/v1**, **code_state/v1**, **agent/v1** ship templates;
   **turn/v1** is defined inline in §5. All as shown above.
+- **Machine tokens are fixed ASCII/English literals — never translate one.** Every schema key and
+  enum above (`HEAD` keys, hand-states, `PHASE`, gate names, log event names, point `Status`,
+  `SCHEMA:` ids, actor and adapter names) is parsed by regex and compared literally; a translated
+  or transliterated token silently fails to parse and diverges under lint (§10, L2). Human-facing
+  prose — turn bodies, `SESSION` Topic/Goal/Done, and the orchestrator's narration to the user —
+  may follow the session's working language, but defaults to ASCII while a write-capable adapter
+  that mangles non-ASCII (e.g. `codex`) is active (lint L21).
 
 ---
 

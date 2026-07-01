@@ -39,7 +39,11 @@ function exists(p) {
   try { fs.accessSync(p); return true; } catch { return false; }
 }
 function readText(p) {
-  return fs.readFileSync(p, "utf8");
+  const s = fs.readFileSync(p, "utf8");
+  // strip a leading UTF-8 BOM (U+FEFF): fs's utf8 decode leaves it as a literal char that would
+  // break any ^-anchored key regex on line 1. charCodeAt avoids an invisible/escaped char in source.
+  // No shipped template puts a key on line 1 today, so this is latent — but a free guard (see L21).
+  return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 }
 function atomicWrite(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -47,9 +51,15 @@ function atomicWrite(file, content) {
   fs.writeFileSync(tmp, content);
   fs.renameSync(tmp, file); // MoveFileEx replace-existing on Windows → atomic
 }
-function appendLine(file, line) {
-  // append is atomic enough for single-writer single-line events
-  fs.appendFileSync(file, line.endsWith("\n") ? line : line + "\n");
+function appendEvent(file, line) {
+  // appendFileSync only guarantees the APPENDED text ends in \n — it never checks the EXISTING file.
+  // If the previous writer (this engine, or an agent's hand-append) left no trailing newline, the new
+  // event merges onto the old last line: parseLog still matches it (the first event's type wins), so
+  // the appended event is silently absorbed into the prior event's `rest` and vanishes from every
+  // replay. Guard the existing tail too so no append can be lost.
+  const withNl = line.endsWith("\n") ? line : line + "\n";
+  const prev = exists(file) ? readText(file) : "";
+  fs.appendFileSync(file, prev.length > 0 && !prev.endsWith("\n") ? "\n" + withNl : withNl);
 }
 function substitute(str, tokens) {
   return str.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in tokens ? tokens[k] : m));
@@ -266,8 +276,8 @@ function cmdAdvance(opts) {
     .replace(/^LAST_UPDATE:.*$/m, `LAST_UPDATE: ${nowIso()}`);
   atomicWrite(path.join(dir, "HEAD.md"), text);
   const log = path.join(dir, "log.md");
-  appendLine(log, `${nowIso()} PHASE_SET PLAN->IMPL plan_open_points=0`);
-  appendLine(log, `${nowIso()} STATE_SET ${primary.name}=START ${secondary.name}=ON_HOLD cursor=${head.cursor.TURN_CURSOR} next=I1/${primary.name} seq=${head.cursor.SEQ}`);
+  appendEvent(log, `${nowIso()} PHASE_SET PLAN->IMPL plan_open_points=0`);
+  appendEvent(log, `${nowIso()} STATE_SET ${primary.name}=START ${secondary.name}=ON_HOLD cursor=${head.cursor.TURN_CURSOR} next=I1/${primary.name} seq=${head.cursor.SEQ}`);
   upsertIndexRow(root, { id, type: getKV(readText(path.join(dir, "SESSION.md")), "Type"), status: "ACTIVE", phase: "IMPL" });
   console.log(`Advanced ${id} to IMPL. ${primary.name} (PRIMARY) holds START for TURN-I1.`);
 }
@@ -289,7 +299,7 @@ function cmdTerminal(opts) {
   for (const s of head.state)
     text = text.replace(new RegExp(`^-\\s*${s.name}:.*$`, "m"), `- ${s.name}: DONE - ${s.role}`);
   atomicWrite(path.join(dir, "HEAD.md"), text);
-  appendLine(path.join(dir, "log.md"),
+  appendEvent(path.join(dir, "log.md"),
     `${nowIso()} TERMINAL ${status} by=${head.byRole.PRIMARY.name} seq=${head.cursor.SEQ}`);
   upsertIndexRow(root, { id, type: getKV(readText(path.join(dir, "SESSION.md")), "Type"), status, phase: head.phase });
   console.log(`Session ${id} set ${status}. Both hands DONE; no further turns.`);
@@ -571,6 +581,14 @@ function lintSession(root, id, { quick }) {
     if (prev && !exists(path.join(turnsDir, prev[1])))
       add("FAIL", "L14", `${f} PREV target missing: ${prev[1]}`);
   }
+  // symmetric with the PREV check: a shard's NEXT link (a real link, not the literal "pending") must
+  // also resolve — backstop for a write-order regression (predecessor NEXT flipped before the
+  // successor shard exists) or a hand-edit that points NEXT at a missing file.
+  for (const f of turnFiles) {
+    const next = readText(path.join(turnsDir, f)).match(/^NEXT:\s*\[[^\]]*\]\(([^)]+)\)/m);
+    if (next && !exists(path.join(turnsDir, next[1])))
+      add("FAIL", "L14", `${f} NEXT target missing: ${next[1]}`);
+  }
 
   // L15 MIRROR-DRIFT — skip actors at START or DONE; their mirrors are legitimately stale. A START
   // holder set SELF_HAND=ON_HOLD ending its previous turn and has not acted yet, so its mirror would
@@ -622,6 +640,49 @@ function lintSession(root, id, { quick }) {
           add("FAIL", "L20", `GATE_SET ${g[1]} by=${by[1]} but ${g[2]} is ${expected} (Rule 10: each gate set by its own actor)`);
       }
     }
+  }
+
+  // L21 ENCODING — a model turn or an external editor can re-save a board file as UTF-8-with-BOM
+  // and/or cp1252 double-encoded; readText's utf8 decode hides both, so it would pass lint silently.
+  // Byte-scan (do NOT text-decode). WARN-only: never block a turn on a recoverable hygiene issue, and
+  // the mojibake sentinel keeps a small residual FP risk on legitimate accented prose.
+  {
+    const encTargets = [
+      path.join(dir, "HEAD.md"), path.join(dir, "SESSION.md"), path.join(dir, "points.md"),
+      path.join(dir, "log.md"), path.join(dir, "plan", "context.md"), path.join(dir, "impl", "code_state.md"),
+    ];
+    if (exists(path.join(dir, "agents")))
+      for (const a of fs.readdirSync(path.join(dir, "agents"))) encTargets.push(path.join(dir, "agents", a));
+    for (const f of turnFiles) encTargets.push(path.join(turnsDir, f));
+    for (const p of encTargets) {
+      if (!exists(p)) continue;
+      const buf = fs.readFileSync(p); // raw bytes — do not decode
+      const rel = path.relative(dir, p).replace(/\\/g, "/");
+      if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+        add("WARN", "L21", `${rel} starts with a UTF-8 BOM (EF BB BF) — re-save as clean UTF-8, no BOM`);
+      for (let i = 0; i < buf.length - 2; i++) {
+        // cp1252 double-encoding run: Â/â (0xC3 0x82 / 0xC3 0xA2) followed by another high byte (e.g.
+        // â€ = C3 A2 E2). Requiring the trailing high byte avoids flagging a real é (C3 A9) or âge.
+        if (buf[i] === 0xc3 && (buf[i + 1] === 0x82 || buf[i + 1] === 0xa2) && buf[i + 2] >= 0x80) {
+          add("WARN", "L21", `${rel} has a cp1252 double-encoding mojibake run near byte ${i} — re-encode as clean UTF-8`);
+          break;
+        }
+      }
+    }
+  }
+
+  // L22 MERGED-LOG-LINE — an append that lacked a trailing-newline guarantee merges the new
+  // event onto the previous line; parseLog still matches (the first event's type wins), so the appended
+  // event is invisible to every replay. No §8 event carries a bare ISO-8601 timestamp as a field value,
+  // so 2+ timestamps on one raw line means two events merged. Narrow by design — header/comment lines
+  // carry no timestamp, so this never false-positives within the closed log grammar.
+  {
+    const tsRe = /\d{4}-\d\d-\d\dT[\d:]+(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)?/g;
+    logText.split(/\r?\n/).forEach((line, i) => {
+      const hits = line.match(tsRe) || [];
+      if (hits.length > 1)
+        add("FAIL", "L22", `log.md line ${i + 1} embeds ${hits.length} timestamps — two events merged onto one line (a prior append lacked a trailing newline)`);
+    });
   }
 
   // L16 CATALOG-SYNC

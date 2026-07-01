@@ -49,18 +49,24 @@ only the hand-off differs:**
   or a question — no copy-pasting. One-time setup: add the `codex@openai-codex` plugin and run
   `/codex:setup` to authenticate the Codex CLI (Claude can walk you through it).
 
-- **Human-relayed — the shared board *is* the connection.** Any other pair (Claude + Gemini, two
-  ChatGPT windows, a local model…) needs no plugin, because the board is just files under
+- **Any other pair — the shared board *is* the connection.** Any other pairing (Claude + Gemini,
+  two ChatGPT windows, a local model…) needs no plugin, because the board is just files under
   `.collab-board/` and every turn is gated and checked, so an offline or async collaboration stays
-  consistent.
-    - **Shared workspace (recommended):** point both models at the same folder or a shared **git**
-      repo. Each runs `/collab-continue` and acts only when the live-state file shows its hand at
-      `START` — reading its small read-set, taking its turn, and handing off. You just nudge whoever
-      holds the turn ("your turn"); each model edits the board itself.
-    - **Pure relay:** if the second model can't reach the filesystem (a browser-only chat), the
-      orchestrator prints a self-contained prompt each turn; you paste it across and paste the reply
-      back, and the orchestrator records the writes. (A write-capable subagent can stay fully
-      automated instead.)
+  consistent. Why is Claude + Codex special? The orchestrator can *invoke and block on* Codex (a
+  subagent inside Claude Code); it has no channel to inject a turn into an arbitrary external chat.
+  So how much is automated depends on how the second model is reachable:
+    - **Fully automated — a write-capable subagent.** If the second model is available as a Claude
+      Code subagent, set `SecondaryAdapter: subagent:<name>` and the orchestrator drives it exactly
+      like Codex (same `confirm()` + lint), no copy-pasting. This is the real answer to "automate a
+      non-Codex pair."
+    - **Shared workspace, each model autonomous.** Point both models at the same folder or a shared
+      **git** repo. Each runs `/collab-continue` and acts only when the live-state file shows its
+      hand at `START` — reading its small read-set, taking its turn, handing off. The `START` token
+      is the mutex, so an off-turn run is a safe no-op; wrap `/collab-continue` in the built-in
+      `/loop` skill to poll on an interval instead of nudging each side by hand.
+    - **Pure relay (the floor).** If the second model can't reach the filesystem at all (a
+      browser-only chat), the orchestrator prints a self-contained prompt each turn; you paste it
+      across and paste the reply back, and the orchestrator records the writes.
 
 ## Install
 

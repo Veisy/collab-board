@@ -23,8 +23,9 @@ Do this:
    Act on the hand at `START`:
    - if it is the **PRIMARY** (you), take the turn per the skill;
    - if it is the **SECONDARY**, delegate via its adapter (for `codex`, spawn
-     `codex:codex-rescue` with `--write --wait --resume` — but `--fresh` if it hasn't taken a turn yet,
-     i.e. `agents/<secondary>.md` `LAST_TURN_WRITTEN: -`; see adapters.md), then verify + lint.
+     `codex:codex-rescue` with `--write --wait --fresh` — `--fresh` is the default for a bounded
+     turn; use `--resume` only to deliberately carry Codex's thread across a multi-turn exchange;
+     see adapters.md), then verify + lint by the board advancing (not the subagent's narration).
 4. Drive the loop until a `USER_QUESTION` needs the user, the session reaches
    `COMPLETED`/`ABORTED`, or you are blocked. Lint after every turn.
 

@@ -33,6 +33,17 @@ yourself, and *delegate* each SECONDARY turn to the other model through its adap
 - **Stay lean** — a board, not a history book; record only what a future turn or the audit
   needs.
 
+## Language
+
+Narrate to the user in **the language of their prompt** (a Turkish prompt → Turkish progress
+notes, questions, and summaries); your chat output is never parsed by `lint` and never read by the
+SECONDARY, so it is free to localize. But **never translate the machine tokens** — `HEAD.md`
+keys, hand-states, `PHASE`, gate names, log event names, point `Status` values, `SCHEMA:` ids, and
+actor/adapter names are fixed ASCII/English literals the parsers match by regex; a translated token
+silently fails to parse and diverges under lint (`L2`). Turn-body prose may follow the working
+language, but default to ASCII while the `codex` adapter is active — its write path corrupts
+pre-existing non-ASCII to mojibake even in a file it merely re-touches (see lint `L21`).
+
 ## The bundled script
 
 A dependency-free Node CLI does the deterministic, error-prone work (scaffolding + verifying).
@@ -107,24 +118,27 @@ the phase (`PHASE`), and the gates.
 The `HANDOFF` line appended to `log.md` is the **commit point** — write `HEAD.md` last so a
 crash leaves a detectable orphan, not corrupted state. In order:
 
-1. If the predecessor shard's `NEXT:` is `pending`, change only that token to a link to your
-   new shard.
-2. **Create** `turns/<NEXT_TURN_ID>-<you>.md` following the `turn/v1` format (Header · Body
+1. **Create** `turns/<NEXT_TURN_ID>-<you>.md` following the `turn/v1` format (Header · Body
    FINDINGS/CHALLENGE/PROPOSAL · Evidence · Handoff · PREV/NEXT). Keep it lean. A turn that
    *resolves* a point should carry real `Evidence` (`Evidence: N/A` on a resolving turn → lint
    `L19` WARN); if it resolves a point *against* a recorded objection, add a one-line
    `- DISSENT:` (§5). For an IMPL turn (PRIMARY only) add the
    `- Impl: BRANCH=… BASE_COMMIT=… LATEST_COMMIT=…` line — a SECONDARY review turn omits it.
+2. In the **predecessor** shard, if its `NEXT:` is `pending`, change only that token to a link
+   to your new shard — do this *after* step 1, so a mid-turn crash leaves an orphan shard (lint
+   `L14`) rather than a dangling `NEXT` pointer to a missing file.
 3. **Update** `points.md` for any point you open/resolve (link `Resolved In` to your shard).
 4. **Append** to `log.md`: a `TURN_COMMIT` line (+ `POINT_SET` if points changed). See
-   `PROTOCOL.md §8` for the exact grammar.
+   `PROTOCOL.md §8` for the exact grammar. First ensure `log.md` ends in a newline — appending
+   onto a newline-less last line merges the two events and the second is silently dropped from
+   every replay (now also caught by lint `L22`).
 5. **Update** your `agents/<you>.md` (`SELF_HAND`, `LAST_TURN_WRITTEN`, private notes).
 6. **Update** `HEAD.md` (atomically — overwrite the whole file): flip `## State` (you
    `WORKING→ON_HOLD`, other `ON_HOLD→START`); set your gate in `## Gates` if you agreed —
    but only once your turn body states your challenge(s) or why no objection remains (§4);
    update `## Cursor` (`TURN_CURSOR`, `RESPONDS_TO`, `NEXT_TURN_ID`, `NEXT_ACTOR`, `SEQ`+1);
    refresh `PLAN_OPEN_POINTS`; set `LAST_UPDATE`.
-7. **Append** the `HANDOFF` line to `log.md` (the commit point).
+7. **Append** the `HANDOFF` line to `log.md` (the commit point; same newline caution as step 4).
 8. **Lint**: `node "$SKILL/scripts/collab-board.mjs" lint --session <id>`. Fix any `FAIL`
    before continuing.
 
@@ -140,26 +154,34 @@ through the adapter named in `SESSION.md` `SecondaryAdapter:`. **Read `reference
 for the full mechanism, the routing-flag rationale, and the scoped-prompt skeleton; the essentials:
 
 - **`codex` (default):** spawn the **Agent tool** with `subagent_type: "codex:codex-rescue"`. Lead
-  the prompt with the routing flags — `--write --wait` (always) plus `--fresh` on Codex's first
-  turn (`agents/codex.md` `LAST_TURN_WRITTEN: -`) or `--resume` after — then the scoped prompt that
-  names the exact minimal read-set and ordered writes. Never call `codex-companion.mjs` or
-  reference `${CLAUDE_PLUGIN_ROOT}` yourself; the subagent owns that.
+  the prompt with the routing flags — `--write --wait`, plus `--fresh` (the default for a bounded
+  turn) — then the scoped prompt that names the exact minimal read-set and ordered writes. Use
+  `--resume` only when you deliberately want Codex to carry its private thread across turns; that
+  thread is repo+Claude-session-scoped (not per-collab-session), so it can bind to a stale one —
+  the board read-set is authoritative, so `--fresh` is the safe default. Never call
+  `codex-companion.mjs` or reference `${CLAUDE_PLUGIN_ROOT}` yourself; the subagent owns that.
 - **`subagent:<name>`** / **`manual`:** another write-capable subagent type, or a printed prompt
   you relay and then scribe yourself (stamp `relayed by` for audit).
 
-Then **verify, don't trust**: if the subagent returned nothing **or** `HEAD.md` is unchanged (your
-hand still isn't `START`, `SEQ` not bumped), the delegation failed — retry once with `--fresh`,
-then escalate (suggest `/codex:setup`). Otherwise re-read only `HEAD.md` + the new shard and run
-`lint`; on a `FAIL` or a `NOT_MY_TURN`, re-delegate a correction — never silently patch
-authoritative state. (Why `--wait`, the `--resume` scoping caveat, and the failed-delegation paths
-are detailed in `adapters.md`.)
+Then **verify, don't trust** — the board is the proof, not the narration. `--wait` *requests* a
+synchronous run but is not a hard guarantee (the subagent can still background), so the completion
+signal is the **board advancing**: your hand is now `START`, `SEQ` is bumped, and the new
+`turns/<id>-<secondary>` shard exists. If the subagent returned nothing **or** `HEAD.md` is
+unchanged, poll the board briefly; if it stays unchanged, the delegation failed — retry once with
+`--fresh`, then escalate (`/codex:setup` for an auth failure). Otherwise re-read only `HEAD.md` +
+the new shard and run `lint`; on a `FAIL` or a `NOT_MY_TURN`, re-delegate a correction — never
+silently patch authoritative state. (The `--wait`/board-polling rationale, the `--resume` scoping
+caveat, scribe-relay, and the failed-delegation paths are detailed in `adapters.md`.)
 
 ## Phase transition, completion, and recovery
 
 - **PLAN → IMPL:** when every `P*` point is resolved and both `PLAN_AGREE_* = YES`, **stop
   delegating** — the PRIMARY crosses the gate on its own turn (don't hand `START` to the
   secondary again). On that turn the PRIMARY writes the frozen plan digest into
-  `plan/context.md`, then runs `advance --session <id>`. `advance` requires the PRIMARY to hold
+  `plan/context.md` — which must **enumerate every file the IMPL phase will touch**, including
+  cross-cutting consistency files (catalog/index, logs, a schema's status section), so the
+  SECONDARY's review doesn't flag legitimate consistency propagation as scope creep — then
+  runs `advance --session <id>`. `advance` requires the PRIMARY to hold
   `START`, enforces the preconditions, flips to `IMPL`, and keeps `START` with the PRIMARY for
   `TURN-I1` (only the PRIMARY edits project files — Rule 7).
 - **Done:** when both `IMPL_AGREE_* = YES`, run `terminal --session <id> --status COMPLETED`
@@ -167,6 +189,12 @@ are detailed in `adapters.md`.)
 - **Stall** (Rule 5), **deadlock** (Rule 6, PRIMARY decides after >3 unresolved turns on a
   point), and **user escalation** (Rule 9) are defined in `PROTOCOL.md`; `lint` flags stalls
   and undecided deadlocks.
+- **Resource limits.** If the SECONDARY becomes unavailable mid-session (a rate/usage limit — its
+  delegation fails in a limit-shaped way), do **not** lower the bar to cope: never substitute your
+  own self-review for the adversarial gate, never author ahead of an ungated backlog. Pause at a
+  **saveable point** — the board is crash-safe after every `HANDOFF`, so between two confirmed
+  turns nothing is lost — tell the user, and resume later with `/collab-continue`. collab-board
+  cannot read a model's usage %; it reacts to observable signals only (see `PROTOCOL.md` §4).
 - **Reset** a session (e.g. to start the same slug fresh) with `reset --session <id>`; it
   archives the old tree (never deletes) and re-scaffolds. A brand-new session is just another
   `new` — prior sessions are untouched immutable trees.
@@ -187,4 +215,4 @@ manual` or `subagent:<name>`; both `new` and `lint` enforce this.
 - `references/adapters.md` — the SecondaryAdapter interface and the `codex` / `subagent` /
   `manual` implementations, with the exact `codex:codex-rescue` spawn recipe and scoped-prompt
   skeleton. **Read when delegating a secondary turn.**
-- `references/lint-spec.md` — each lint check (L1–L20; L17 retired), its severity, and the rule it enforces.
+- `references/lint-spec.md` — each lint check (L1–L22; L17 retired), its severity, and the rule it enforces.

@@ -31,6 +31,11 @@ confirm(sessionId) -> ok|fail
 **Contract every adapter must honor**
 
 - The secondary reads **only** the named minimal set (the scoped prompt enumerates it).
+- Keep that read-set **tight** (≈5 files: the board files + at most one or two artifacts). A
+  file-heavy turn is the dominant stall cause; for a broad consistency review prefer a single
+  `rg`/command check over reading each file, search a small **family** of equivalent terms (not
+  one literal string), and on Windows use `rg` (Git-for-Windows `grep` can throw a
+  `CreateFileMapping` error).
 - The secondary writes its **own** turn shard, its **own** hand line in `HEAD.md`, and the
   `points`/`log`/`agents` updates, in the order the scoped prompt specifies.
 - A SECONDARY **IMPL** turn is **review-only** — it never edits project source files and
@@ -62,27 +67,31 @@ Routing flags to put at the very top of the prompt:
 
 - `--write` — **always.** Gives Codex a workspace-write sandbox rooted at the project so it
   authors its own shard and flips its own hand-state in `HEAD.md` directly.
-- `--wait` — **always.** Forces the run synchronous. Do **not** rely on foreground being the
-  default: a collab-board turn is multi-step, and the rescue subagent may decide on its own to
-  run `--background`, which returns immediately while Codex writes asynchronously — your
-  `confirm()`+lint would then hit a half-written board (spurious orphan / dual-START /
-  projection FAILs, or a writer race). `--wait` is a Claude-side control the subagent strips
-  before calling Codex, and it disables the auto-background heuristic. (Precisely: `codex-companion`'s
-  `task` subcommand has no `--wait` flag — `task` already runs in the foreground — so it is the
-  **codex-rescue agent** that reads `--wait` and forces foreground instead of auto-backgrounding.)
-- `--fresh` on Codex's **first** turn of the session (`agents/codex.md` `LAST_TURN_WRITTEN: -`);
-  `--resume` on **every subsequent** Codex turn. `--resume` continues the latest Codex thread
-  in *this repo + this Claude session* so Codex keeps its working memory across turns — but the
-  scope is repo+Claude-session, **not** the collab-board session id. Two collab-board sessions
-  in one repo+Claude-session, or a changed Claude session, can make `--resume` attach to the
-  wrong thread or find none. That is harmless to the board (the scoped read-set + `confirm()`
-  + lint bound everything; Codex's private memory is never authoritative) — on a miss, just
-  fall back to `--fresh`.
+- `--wait` — **always.** *Requests* a synchronous run so `confirm()`+lint don't hit a half-written
+  board (spurious orphan / dual-START / projection FAILs, or a writer race). But treat it as a
+  request, **not** a guarantee: the rescue subagent may background a multi-step turn anyway —
+  returning "running in the background" with `HEAD` unchanged while Codex writes asynchronously.
+  So the **authoritative completion signal is the board
+  advancing** (your hand `START`, `SEQ` bumped, the new shard present), never the subagent's
+  narration. `--wait` is a Claude-side control the subagent strips before calling Codex
+  (`codex-companion`'s `task` subcommand has none — `task` already runs foreground); it biases the
+  agent toward foreground, but if `confirm()` finds `HEAD` unchanged, **poll the board briefly**
+  before concluding the delegation failed (see the failed-delegation path below).
+- `--fresh` is the **default** for a bounded collab-board turn — always on Codex's first turn
+  (`agents/codex.md` `LAST_TURN_WRITTEN: -`), and the safe choice for every turn after. The scoped
+  read-set + `confirm()` + lint make the board fully self-describing, so Codex's private thread
+  memory is **never** authoritative and re-reading `PROTOCOL.md` fresh each turn costs little.
+  Reach for `--resume` only when you deliberately want Codex to carry working memory across a
+  genuinely multi-turn exchange — and know its scope is repo+Claude-session, **not** the
+  collab-board session id: across many turns it re-binds to a **stale** thread and reports a
+  misleading "still running" against a dead task id. On any such miss — or simply by default —
+  use `--fresh`.
 - `--model` / `--effort` — only if `SESSION.md` requests them; otherwise omit.
 
-So the flags line is e.g. `--write --wait --resume` (or `--write --wait --fresh` on the first
-turn). With `--wait` present the run is synchronous — the PRIMARY blocks until Codex finishes,
-so there is never a concurrent writer.
+So the flags line is e.g. `--write --wait --fresh` (the default; use `--resume` only to carry
+Codex's thread across a deliberate multi-turn exchange). `--wait` requests foreground but does not
+guarantee it — confirm completion by the **board advancing**, not by assuming the PRIMARY blocked
+(see the `--wait` note above).
 
 `via=codex` is recorded in the `log.md` `TURN_COMMIT` line.
 
@@ -94,6 +103,16 @@ hand is still not `START`, no new `turns/<NEXT_TURN_ID>` shard, `SEQ` not bumped
 delegation as **failed** — do **not** take the turn yourself. Retry once with `--fresh` (in
 case `--resume` found no thread); if it still fails, tell the user to run `/codex:setup` or
 escalate. This is distinct from `NOT_MY_TURN` (Codex *did* run but read `HEAD` wrong).
+
+**Scribe-relay when Codex returns a verdict but no board write landed.** Distinct from a failed
+delegation: sometimes Codex runs the turn and returns a **complete, concrete** verdict + evidence,
+but its sandbox blocked the board writes, so `HEAD`/log/shards are unchanged. Do **not**
+just retry — that discards sound review work. Instead apply the MANUAL adapter's scribe path to
+this codex turn: the PRIMARY creates `turns/<id>-<secondary>.md` from the returned verdict
+**verbatim** (never inventing content), performs the `points`/`log`/`HEAD` writes on Codex's
+behalf, and stamps `via=codex relayed_by=<PRIMARY>` so the relay is auditable (§8; `relayed_by=` is
+exempt from the L20 gate-authorship check). Only scribe a verdict concrete enough to transcribe
+faithfully — if it is vague, re-delegate instead.
 
 ---
 
@@ -125,7 +144,7 @@ Fill `<...>` from `HEAD.md`. This is what the secondary receives. For the CODEX 
 prefix the routing flags line.
 
 ```
---write --wait --resume   ← CODEX adapter only; use --write --wait --fresh on the secondary's first turn
+--write --wait --fresh   ← CODEX adapter only; --fresh is the default for a bounded turn (use --resume only to deliberately carry Codex's thread across a multi-turn exchange)
 
 You are SECONDARY=<SECONDARY> in collab-board session <id>. Project root is the cwd.
 Follow .collab-board/PROTOCOL.md strictly. Be skeptical but open; favor the simplest
@@ -150,24 +169,29 @@ You are SECONDARY: do NOT edit project source files (Rule 7). An IMPL turn is re
 omit the "- Impl:" line and author no branch/commit; cite the reviewed commit in Evidence.
 If this is your FIRST turn of the session, ACK the contract (Topic/Goal/Done from SESSION.md) in
 your turn body (Rule 2).
+Do NOT run `lint` yourself — the PRIMARY verifies after your turn (the script path differs from the
+project cwd anyway). For a broad consistency check, prefer one `rg`/command over reading many files,
+and on Windows use `rg` (Git-for-Windows `grep` can error).
 
-WRITE, IN THIS ORDER (HEAD.md last; the log HANDOFF line is the commit point):
-  1. In <RESPONDS_TO>, change ONLY the literal "NEXT: pending" to
-     "NEXT: [<NEXT_TURN_ID>](<NEXT_TURN_ID>-<secondary_lc>.md)". Touch nothing else there.
-  2. CREATE turns/<NEXT_TURN_ID>-<secondary_lc>.md (turn/v1: Header, Body, Evidence,
+WRITE, IN THIS ORDER (HEAD.md written before the log HANDOFF line, which is the commit point):
+  1. CREATE turns/<NEXT_TURN_ID>-<secondary_lc>.md (turn/v1: Header, Body, Evidence,
      Handoff; then on their own lines `PREV: [<resp-id>](<resp-id>-<resp-actor-lc>.md)` — or
      `PREV: NEW` — and `NEXT: pending`). Keep it lean — signal, not transcript.
+  2. In <RESPONDS_TO>, change ONLY the literal "NEXT: pending" to
+     "NEXT: [<NEXT_TURN_ID>](<NEXT_TURN_ID>-<secondary_lc>.md)" — after step 1, so a crash leaves an
+     orphan shard (lint L14) not a dangling NEXT to a missing file. Touch nothing else there.
   3. UPDATE points.md for any point you resolve (Resolved In = link to your shard).
-  4. APPEND log.md:
+  4. APPEND log.md (first ensure the file ends in a newline — else your line merges onto the last
+     one and is silently dropped from every replay; lint L22):
      "<ts> TURN_COMMIT <NEXT_TURN_ID> actor=<SECONDARY> responds_to=<resp-id> points=<ids> via=codex"
      (+ a POINT_SET line if you changed any point).
   5. UPDATE agents/<secondary_lc>.md: SELF_HAND=ON_HOLD, LAST_TURN_WRITTEN=<NEXT_TURN_ID>,
      and your private notes.
-  6. UPDATE HEAD.md (write atomically, last): ## State <SECONDARY> WORKING->ON_HOLD and
+  6. UPDATE HEAD.md (write atomically): ## State <SECONDARY> WORKING->ON_HOLD and
      <PRIMARY> ON_HOLD->START; set your gate(s) in ## Gates if you agreed; ## Cursor
      TURN_CURSOR=<NEXT_TURN_ID>, RESPONDS_TO=turns/<NEXT_TURN_ID>-<secondary_lc>.md,
      NEXT_TURN_ID=<next>, NEXT_ACTOR=<PRIMARY>, SEQ+1; LAST_UPDATE=now.
-  7. APPEND log.md:
+  7. APPEND log.md (same newline caution as step 4):
      "<ts> HANDOFF <SECONDARY>:WORKING->ON_HOLD <PRIMARY>:ON_HOLD->START next=<next>/<PRIMARY> seq=<SEQ>".
 
 Output a 3-line summary; the files are the real deliverable.
