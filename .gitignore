@@ -1,0 +1,12 @@
+# This repo is the SOURCE of the collab-board skill (installed into a project's .claude/ by install.mjs).
+
+# Installed tooling (produced from skill/ by install.mjs — install per project instead)
+.claude/
+
+# Runtime collaboration session data (created by /collab-new in a target project)
+.collab-board/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log

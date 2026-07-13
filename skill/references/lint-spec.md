@@ -1,0 +1,49 @@
+# Lint specification
+
+`node scripts/collab-board.mjs lint --session <id>` (or `--all`) is **read-only**. It
+recomputes every denormalized field from its authoritative source and prints one line per
+finding — `PASS`, `WARN <code> ...`, or `FAIL <code> ...` — exiting non-zero if any `FAIL`.
+Run it after **every** turn (especially each secondary delegation) and before any
+phase/terminal transition. `--quick` skips the full-log projection (L2) for hot-loop use.
+
+Authoritative sources, by field:
+
+- hand-state, phase, cursor, gates → `HEAD.md` (and re-derivable from `log.md` via L2)
+- point statuses / open count → `points.md`
+- impl metadata → `impl/code_state.md` + the impl shard
+- contract → `SESSION.md`
+
+| Code | Severity | Rule | Checks |
+|------|----------|------|--------|
+| L0 PRECONDITION | FAIL | — | The session directory has no `HEAD.md` — there is nothing to verify, so lint reports this and stops (no other checks run for that session). |
+| L1 SPLIT-STATE | FAIL | 1 | A full State-section assignment `- <ACTOR>: <HAND> - <ROLE>` appears in any file other than `HEAD.md`. (Anchored on the trailing ` - <ROLE>`, so prose/notes bullets, `SELF_HAND:` mirrors, and turn Handoff lines don't match.) Also FAILs if `HEAD.md ## State` lists the same actor name twice — PRIMARY and SECONDARY must be distinct. |
+| L2 PROJECTION | FAIL | 1,4 | Replay `log.md` (OPEN/STATE_SET/HANDOFF/STALL_HANDOFF/GATE_SET/PHASE_SET/TERMINAL) → recompute hands, phase, gates, SEQ → assert equal to `HEAD.md`. `STALL_HANDOFF` flips the stalled actor to `ON_HOLD` and the `next=` actor to `START` (it carries `seq=`, like a handoff), so a Rule 5 recovery replays cleanly. Divergence means `HEAD` is corrupt; the log wins. Skipped under `--quick`. |
+| L3 DUAL-START | FAIL | 4 | While `SESSION_STATUS=ACTIVE`, exactly one hand is in {START,WORKING}; hand tokens are valid; `NEXT_ACTOR` equals that holder. Also emits a **WARN** (advisory) if an `IDLE` session has any `START`/`WORKING` hand. |
+| L4 PLAN-GATE | FAIL | 3,10 | `PLAN_OPEN_POINTS` equals the actual count of `OPEN` `P*` rows. If `PHASE=IMPL`: that count is 0, both `PLAN_AGREE_*=YES`, and `plan/context.md` is a real digest (not `STATUS: EMPTY`). Also: any `\| <id> \|`-shaped point row that fails to parse cleanly (e.g. missing trailing pipe) is a FAIL — an unparseable OPEN point must never be silently treated as resolved. |
+| L5 IMPL-BEFORE-GATE | FAIL | 3 | Any `I*` turn shard / `TURN_COMMIT` exists but there is no prior `PHASE_SET PLAN->IMPL` in the log. |
+| L6 IMPL-AUTHORITY | FAIL | 7 | A SECONDARY impl turn carries a real `BRANCH` or `LATEST_COMMIT` (the markers that it authored code — review-only turns omit the `Impl:` line). A PRIMARY impl turn leaves any of `BRANCH/BASE_COMMIT/LATEST_COMMIT` at the `—`/`-` placeholder (in `impl/code_state.md` or the shard). The literal `NONE` is a VALID "no git / not tracked" value — a non-git repo, or before the first commit — and passes. |
+| L7 CONTRACT | FAIL | 2 | `P1` exists but `SESSION.md` still has `Topic`/`Goal`/`Done` = `—`. |
+| L8 ACK | WARN | 2 | The secondary's first turn body does not mention `ACK` of the contract. |
+| L9 STALL | WARN | 5 | `now − LAST_UPDATE > CHECK` → WARN; `> CHECK+HANDOFF` with no `STALL_HANDOFF` logged → WARN (advisory only — a paused-but-healthy board must not hard-FAIL; if the owed actor is truly silent, log `STALL_HANDOFF` and force the handoff). Timers from `SESSION.Stall`. |
+| L10 DEADLOCK | FAIL | 6 | A point still `OPEN` with more than 3 `TURN_COMMIT`s referencing it and no `DECISION` line. Fires the moment the threshold is crossed — typically right after a secondary turn commits. It is the Rule 6 forcing signal, not board corruption: the expected recovery is that the PRIMARY resolves the point (or logs a `DECISION`) on its very next turn, which clears the FAIL. |
+| L11 TERMINAL | FAIL | 8 | `SESSION_STATUS` terminal but both hands ≠ `DONE`; or a `TURN_COMMIT`/`HANDOFF` logged after the `TERMINAL` line; or `SESSION_STATUS=COMPLETED` without (`PHASE=IMPL` and both `IMPL_AGREE_*=YES`) — the completion gate. |
+| L12 ESCALATION | WARN | 9 | A turn body has `USER_QUESTION:` but there are fewer matching `USER_QUESTION` log lines. |
+| L13 TURN-SCHEMA | FAIL | turn fmt | A `turns/*.md` shard is missing a required line (heading, `Header`, `Body`, `Evidence`, `Handoff`, `PREV:`, `NEXT:`); a PRIMARY IMPL shard missing its `Impl:` line (which must start at column 0 — an indented copy nested inside `Body` does not count). |
+| L14 CHAIN/ORPHAN | FAIL | §3 | Every shard has a matching `TURN_COMMIT` and vice-versa (an orphan = crash mid-turn); `HEAD.RESPONDS_TO` resolves; and each shard's `PREV` **and** `NEXT` link target exists (`NEW` / `pending` excepted). The `NEXT` check is symmetric with `PREV` and catches a write-order regression — a predecessor's `NEXT` flipped to a link before the successor shard exists (a dangling forward pointer). |
+| L15 MIRROR-DRIFT | WARN | 1 | `agents/<a>.md` `SELF_HAND` ≠ that actor's hand in `HEAD.md`, for an actor **not** at `START` or `DONE`. Both are skipped because their mirrors are legitimately stale: a `START`-holder set `SELF_HAND=ON_HOLD` ending its last turn and hasn't acted yet, and a `DONE` actor was flipped by `terminal` (an engine action, not a turn — and a terminated session takes no more turns, so the drift is moot). L3 guarantees at most one `START` holder, so a genuine stale mirror on an ON_HOLD/WORKING actor is still caught. |
+| L16 CATALOG-SYNC | WARN | catalog | The `index.md` row for this session disagrees with `HEAD` on Status/Phase. Reconciled to `ACTIVE` by `activate` on the first turn, and by `advance`/`terminal`/`reset` thereafter. |
+| L18 CLI-EXECUTOR | FAIL | adapter | `SecondaryAdapter` is outside the closed set (`codex-cli`, `claude-cli`, `manual`, non-empty `subagent:<name>`, or stored legacy `codex`), or a CLI executor names a secondary the `Roles` line doesn't match: `codex-cli`/`codex` requires `SECONDARY=CODEX`; `claude-cli` requires `SECONDARY=CLAUDE`. |
+| L19 EVIDENCE-ON-RESOLVE | WARN | evidence | A turn that **resolves** a point (a `POINT_SET` to a non-`OPEN` status in the log) has an `- Evidence:` line whose inline value is literally `N/A`. Advisory only (never FAIL): a resolved decision should cite resolvable evidence (`file:line`, command/test output, doc/URL). Whether a claim is "disputed" is prose guidance, not lintable — L19 flags only the explicit empty-evidence token, never judges content. Reinforces "challenge and ask with evidence"; mutual agreement is not verification. |
+| L20 GATE-AUTHORSHIP | FAIL | 10 | A `GATE_SET` whose `by=<ACTOR>` disagrees with the gate's role suffix (`*_PRIMARY`/`*_SECONDARY`) — i.e. one actor flipping the other's agreement gate (a forged sign-off). Each gate is set by its own actor; this is the machine-checkable half of the §4 anti-rubber-stamp norm (`justified_by=`/`relayed_by=` are not matched). |
+| L21 ENCODING | WARN | encoding | A board file (`HEAD`/`SESSION`/`points`/`log`/`plan/context`/`impl/code_state`/`agents/*`/`turns/*`) begins with a UTF-8 **BOM** (`EF BB BF`), or contains a **cp1252 double-encoding mojibake run** (`0xC3 0x82`/`0xC3 0xA2` followed by another high byte — e.g. `â€`). A raw byte-scan, not a text decode; `readText` itself strips a leading BOM before parsing. WARN-only — an encoding-hygiene issue must never block an otherwise-valid turn, and the mojibake sentinel requires the trailing high byte so a legitimate accented letter (`é`=`C3 A9`) does not trip it. A model turn or an external editor can introduce either and it would otherwise pass lint silently; re-save as clean UTF-8 (no BOM). |
+| L22 MERGED-LOG-LINE | FAIL | §8 | A `log.md` line embeds 2+ ISO-8601 timestamps — two events merged onto one line because a prior append lacked a trailing newline. `parseLog` still matches such a line (the first event's type wins), so the second event silently vanishes from every replay; L22 catches the merge that L2/L14 can otherwise miss (a merged `POINT_SET`/`DECISION` touches no field they compare). No §8 event carries a bare timestamp as a field value, so the 2-timestamp signature is false-positive-free within the closed grammar (header/comment lines carry none). The engine's `appendEvent` prevents the merge at every engine append site; L22 is the backstop for a hand-edit or a future writer. |
+| L23 LOG-TIMESTAMP-ORDER | FAIL | §8 | Parsed log event timestamps decrease, or a log event / `HEAD.LAST_UPDATE` is more than 60 seconds ahead of the host clock. Equal timestamps stay valid for legacy boards; later events may not be earlier. For a shell-free secondary, PRIMARY supplies `DISPATCH_UTC = max(host UTC, HEAD.LAST_UPDATE + 1 ms)` and the turn uses ordered millisecond offsets. A failure can also diagnose `STALL_CHECK` racing a late-landing dispatched turn — that near-double-writer overlap should be surfaced, not suppressed. The engine's `appendEvent` clamps its own second-precision stamp to the log's last event time when the gap is under one second (the truncation artifact; equality is valid) — a larger decrease is written as-is so L23 still surfaces the earlier wrong-time event. |
+
+*(L17 — formerly `EXPECT≠PHASE` — was retired when `HEAD.EXPECT` was removed in a hardening pass; the id is intentionally not reused, hence the L16→L18 gap.)*
+
+**Remediation, in general:** a `FAIL` means a write step was skipped or done out of order.
+Because `HEAD.md` is written last and the `HANDOFF` log line is the commit point, an
+incomplete turn is recoverable: either complete the missing writes (then re-lint) or, for an
+orphan shard with no `HANDOFF`, delete the orphan and re-delegate the turn. Never paper over a
+projection (L2) mismatch by editing `HEAD` to match a wrong assumption — reconcile against the
+log, which is the immutable derivation.
