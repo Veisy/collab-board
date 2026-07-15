@@ -20,6 +20,14 @@ PRIMARY (actor distinctness is enforced at scaffold). The **host** the orchestra
 is not board state and not linted — see `hosts/` for per-host mechanics (command timeouts,
 skill loading, preflights).
 
+**Naming convention:** executors are named for the CLI they dispatch (`codex-cli`,
+`claude-cli` — the `codex`/`claude` binaries); hosts are named for the **product** the
+orchestrator runs in (`claude-code` = Claude Code, `codex-cli` = the Codex CLI). The string
+`codex-cli` therefore names both a host and an executor — distinct things: one is where the
+PRIMARY runs, the other is what dispatches the SECONDARY. The Claude pair splits into
+`claude-code` (host) and `claude-cli` (executor) only because Anthropic's product and its
+binary have different names.
+
 ---
 
 ## The interface
@@ -220,6 +228,6 @@ After the secondary returns, the PRIMARY runs `confirm()`: first the executor's 
 checks (INVALID result or unchanged `HEAD.md` → board-first check, confirmed process
 death, limit classification, retry once, then escalate); then re-read `HEAD.md` + the new
 shard and run
-`node scripts/collab-board.mjs lint --session <id>`. If lint FAILs or the secondary
+`node "$SKILL/scripts/collab-board.mjs" lint --session <id>`. If lint FAILs or the secondary
 returned `NOT_MY_TURN`, do **not** silently repair authoritative state — re-delegate a
 correction turn or escalate per the stall rules.

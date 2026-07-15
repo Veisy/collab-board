@@ -25,6 +25,10 @@ const TYPES = ["BUG_FIX", "FEATURE", "REFACTOR", "META", "INVESTIGATION"];
 const TERMINALS = ["COMPLETED", "ABORTED"];
 const POINT_STATUSES = ["OPEN", "AGREED", "REJECTED", "DEFERRED", "OUT_OF_SCOPE"];
 const CLI_EXECUTORS = { codex: "CODEX", "codex-cli": "CODEX", "claude-cli": "CLAUDE" };
+// The one strict point-row pattern, shared by parsePoints and malformedPointRows. The
+// shape-detector/strict-parser pair must never drift apart — an unparseable OPEN point
+// must not be silently read as resolved (L4).
+const POINT_ROW_RE = /^\|\s*([PI]\d+)\s*\|\s*(\w+)\s*\|\s*(.*?)\s*\|\s*(\w+)\s*\|\s*(.*?)\s*\|$/;
 
 function defaultAdapter(secondary) {
   return secondary === "CODEX" ? "codex-cli" : secondary === "CLAUDE" ? "claude-cli" : "manual";
@@ -105,11 +109,10 @@ function sanitizeActor(name) {
 // em-dash status, escaped pipe). Returned ids must not be silently treated as "no open points".
 function malformedPointRows(text) {
   const bad = [];
-  const strict = /^\|\s*([PI]\d+)\s*\|\s*(\w+)\s*\|\s*(.*?)\s*\|\s*(\w+)\s*\|\s*(.*?)\s*\|$/;
   for (const line of text.split(/\r?\n/)) {
     // Shape-detector is case-insensitive on the id so a lowercase `p1`/`i2` row (which the strict,
     // uppercase-only parser would silently drop) is caught as malformed instead of read as resolved.
-    if (/^\|\s*[PIpi]\d+\s*\|/.test(line) && !strict.test(line))
+    if (/^\|\s*[PIpi]\d+\s*\|/.test(line) && !POINT_ROW_RE.test(line))
       bad.push((line.match(/^\|\s*([PIpi]\d+)/) || [])[1] || "?");
   }
   return bad;
@@ -140,13 +143,13 @@ function parseHead(text) {
     const m = line.match(/^-\s*(\S+):\s*(\w+)\s*-\s*(\w+)\s*$/);
     if (m) state.push({ name: m[1], hand: m[2], role: m[3].toUpperCase() });
   }
-  const byRole = {}, byName = {};
-  for (const s of state) { byRole[s.role] = s; byName[s.name] = s; }
+  const byRole = {};
+  for (const s of state) byRole[s.role] = s;
   return {
     raw: text,
     status: getKV(text, "SESSION_STATUS"),
     phase: getKV(text, "PHASE"),
-    state, byRole, byName,
+    state, byRole,
     cursor: {
       TURN_CURSOR: getKV(text, "TURN_CURSOR"),
       RESPONDS_TO: getKV(text, "RESPONDS_TO"),
@@ -167,7 +170,7 @@ function parseHead(text) {
 function parsePoints(text) {
   const rows = [];
   for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\|\s*([PI]\d+)\s*\|\s*(\w+)\s*\|\s*(.*?)\s*\|\s*(\w+)\s*\|\s*(.*?)\s*\|$/);
+    const m = line.match(POINT_ROW_RE);
     if (m) rows.push({ id: m[1], part: m[2], title: m[3], status: m[4], resolved: m[5] });
   }
   return rows;
@@ -320,6 +323,19 @@ function cmdTerminal(opts) {
   const head = parseHead(readText(path.join(dir, "HEAD.md")));
   if (head.state.length !== 2 || !head.byRole.PRIMARY)
     die("terminal: HEAD.md ## State is malformed — run `lint --session " + id + "` first");
+  // Idempotent re-run: the write order is HEAD -> TERMINAL log line -> catalog row, so a crash
+  // leaves two distinct repair windows. A prior SAME-status TERMINAL in the log means only the
+  // catalog row can be missing/stale — reconcile HEAD + catalog and append NO second event
+  // (L11 would flag activity after TERMINAL; the log stays single-event). A DIFFERENT status is
+  // a conflict: refuse before touching anything — and check this BEFORE the completion gate, so
+  // a conflicting re-run gets the true diagnostic, not a misleading gate error. No prior
+  // TERMINAL = the normal path, which also repairs the post-HEAD/pre-log crash window by
+  // completing the missing writes.
+  const logFile = path.join(dir, "log.md");
+  const prior = exists(logFile) ? parseLog(readText(logFile)).find((e) => e.type === "TERMINAL") : undefined;
+  const priorStatus = prior?.rest.split(/\s+/)[0];
+  if (prior && priorStatus !== status)
+    die(`terminal: session ${id} already logged TERMINAL ${priorStatus} — cannot re-terminal as ${status}`);
   if (status === "COMPLETED" && (head.phase !== "IMPL"
       || head.gates.IMPL_AGREE_PRIMARY !== "YES" || head.gates.IMPL_AGREE_SECONDARY !== "YES"))
     die("terminal COMPLETED requires PHASE=IMPL and both IMPL_AGREE_*=YES (use --status ABORTED to stop early)");
@@ -328,10 +344,13 @@ function cmdTerminal(opts) {
   for (const s of head.state)
     text = text.replace(new RegExp(`^-\\s*${s.name}:.*$`, "m"), `- ${s.name}: DONE - ${s.role}`);
   atomicWrite(path.join(dir, "HEAD.md"), text);
-  appendEvent(path.join(dir, "log.md"),
-    `${nowIso()} TERMINAL ${status} by=${head.byRole.PRIMARY.name} seq=${head.cursor.SEQ}`);
+  if (!prior)
+    appendEvent(logFile,
+      `${nowIso()} TERMINAL ${status} by=${head.byRole.PRIMARY.name} seq=${head.cursor.SEQ}`);
   upsertIndexRow(root, { id, type: getKV(readText(path.join(dir, "SESSION.md")), "Type"), status, phase: head.phase });
-  console.log(`Session ${id} set ${status}. Both hands DONE; no further turns.`);
+  console.log(prior
+    ? `Session ${id} was already ${status}; reconciled HEAD/catalog (no new TERMINAL event).`
+    : `Session ${id} set ${status}. Both hands DONE; no further turns.`);
 }
 
 function cmdReset(opts) {
@@ -430,13 +449,24 @@ function lintSession(root, id, { quick }) {
   const add = (level, code, msg) => F.push({ level, code, msg });
   if (!exists(path.join(dir, "HEAD.md"))) { add("FAIL", "L0", `session ${id} has no HEAD.md`); return F; }
 
-  const headText = readText(path.join(dir, "HEAD.md"));
+  // Per-run memoized text reads: several checks visit the same turn/agent files (L1, L6, L8,
+  // L12, L13, L14, L19). Lint is read-only and single-pass, so within-run staleness cannot
+  // arise. L21 is EXEMPT — it must scan raw bytes (fs.readFileSync, no decode), never this
+  // BOM-stripped text cache.
+  const readCache = new Map();
+  const cached = (p) => {
+    let t = readCache.get(p);
+    if (t === undefined) { t = readText(p); readCache.set(p, t); }
+    return t;
+  };
+
+  const headText = cached(path.join(dir, "HEAD.md"));
   const head = parseHead(headText);
-  const pointsText = exists(path.join(dir, "points.md")) ? readText(path.join(dir, "points.md")) : "";
+  const pointsText = exists(path.join(dir, "points.md")) ? cached(path.join(dir, "points.md")) : "";
   const points = parsePoints(pointsText);
-  const logText = exists(path.join(dir, "log.md")) ? readText(path.join(dir, "log.md")) : "";
+  const logText = exists(path.join(dir, "log.md")) ? cached(path.join(dir, "log.md")) : "";
   const events = parseLog(logText);
-  const sessText = exists(path.join(dir, "SESSION.md")) ? readText(path.join(dir, "SESSION.md")) : "";
+  const sessText = exists(path.join(dir, "SESSION.md")) ? cached(path.join(dir, "SESSION.md")) : "";
   const turnsDir = path.join(dir, "turns");
   const turnFiles = exists(turnsDir) ? fs.readdirSync(turnsDir).filter((f) => /^[PI]\d+-\w+\.md$/.test(f)) : [];
   const names = head.state.map((s) => s.name);
@@ -445,8 +475,9 @@ function lintSession(root, id, { quick }) {
   // so legitimate prose/notes bullets that mention a hand token are not false-flagged.
   if (names.length === 2 && names[0] !== names[1]) {
     const re = new RegExp(`^-\\s*(${names.join("|")}):\\s*(${HANDS.join("|")})\\s*-\\s*(PRIMARY|SECONDARY)\\s*$`, "m");
-    const scan = (p) => { if (exists(p) && re.test(readText(p))) add("FAIL", "L1", `hand-token outside HEAD.md in ${path.relative(dir, p)}`); };
+    const scan = (p) => { if (exists(p) && re.test(cached(p))) add("FAIL", "L1", `hand-token outside HEAD.md in ${path.relative(dir, p)}`); };
     scan(path.join(dir, "points.md")); scan(path.join(dir, "log.md")); scan(path.join(dir, "SESSION.md"));
+    scan(path.join(dir, "plan", "context.md")); scan(path.join(dir, "impl", "code_state.md"));
     for (const f of turnFiles) scan(path.join(turnsDir, f));
     for (const a of (exists(path.join(dir, "agents")) ? fs.readdirSync(path.join(dir, "agents")) : []))
       scan(path.join(dir, "agents", a));
@@ -457,16 +488,14 @@ function lintSession(root, id, { quick }) {
   // L2 PROJECTION
   if (!quick && names.length === 2) {
     const proj = projectLog(events, names);
-    if (proj) {
-      for (const s of head.state)
-        if (proj.hands[s.name] && proj.hands[s.name] !== s.hand)
-          add("FAIL", "L2", `HEAD hand ${s.name}=${s.hand} but log projects ${proj.hands[s.name]}`);
-      if (proj.phase !== head.phase) add("FAIL", "L2", `HEAD PHASE=${head.phase} but log projects ${proj.phase}`);
-      if (proj.seq !== head.cursor.SEQ) add("FAIL", "L2", `HEAD SEQ=${head.cursor.SEQ} but log projects ${proj.seq}`);
-      if (proj.status !== head.status) add("FAIL", "L2", `HEAD SESSION_STATUS=${head.status} but log projects ${proj.status}`);
-      for (const g of ["PLAN_AGREE_PRIMARY", "PLAN_AGREE_SECONDARY", "IMPL_AGREE_PRIMARY", "IMPL_AGREE_SECONDARY"])
-        if (proj.gates[g] !== head.gates[g]) add("FAIL", "L2", `HEAD ${g}=${head.gates[g]} but log projects ${proj.gates[g]}`);
-    }
+    for (const s of head.state)
+      if (proj.hands[s.name] && proj.hands[s.name] !== s.hand)
+        add("FAIL", "L2", `HEAD hand ${s.name}=${s.hand} but log projects ${proj.hands[s.name]}`);
+    if (proj.phase !== head.phase) add("FAIL", "L2", `HEAD PHASE=${head.phase} but log projects ${proj.phase}`);
+    if (proj.seq !== head.cursor.SEQ) add("FAIL", "L2", `HEAD SEQ=${head.cursor.SEQ} but log projects ${proj.seq}`);
+    if (proj.status !== head.status) add("FAIL", "L2", `HEAD SESSION_STATUS=${head.status} but log projects ${proj.status}`);
+    for (const g of ["PLAN_AGREE_PRIMARY", "PLAN_AGREE_SECONDARY", "IMPL_AGREE_PRIMARY", "IMPL_AGREE_SECONDARY"])
+      if (proj.gates[g] !== head.gates[g]) add("FAIL", "L2", `HEAD ${g}=${head.gates[g]} but log projects ${proj.gates[g]}`);
   }
 
   // L3 DUAL-START / NEXT_ACTOR
@@ -489,7 +518,7 @@ function lintSession(root, id, { quick }) {
     if (head.gates.PLAN_AGREE_PRIMARY !== "YES" || head.gates.PLAN_AGREE_SECONDARY !== "YES")
       add("FAIL", "L4", `PHASE=IMPL but PLAN_AGREE not both YES`);
     const ctx = path.join(dir, "plan", "context.md");
-    if (!exists(ctx) || /^STATUS:\s*EMPTY\s*$/m.test(readText(ctx)))
+    if (!exists(ctx) || /^STATUS:\s*EMPTY\s*$/m.test(cached(ctx)))
       add("FAIL", "L4", `PHASE=IMPL but plan/context.md is empty/missing`);
   }
 
@@ -507,7 +536,7 @@ function lintSession(root, id, { quick }) {
   for (const f of turnFiles.filter((x) => x.startsWith("I"))) {
     const actorLc = f.match(/^I\d+-(\w+)\.md$/)[1];
     const role = roleOf(actorLc);
-    const t = readText(path.join(turnsDir, f));
+    const t = cached(path.join(turnsDir, f));
     const implLine = t.match(/^-\s*Impl:.*$/m)?.[0] || "";
     const hasReal = /BRANCH=(?!—|-\s)\S/.test(implLine) || /LATEST_COMMIT=(?!—|-\s)\S/.test(implLine);
     if (role === "SECONDARY" && hasReal)
@@ -518,7 +547,7 @@ function lintSession(root, id, { quick }) {
     // A PRIMARY impl turn must record real code state. `—`/`-` are the "not set yet" placeholders
     // and are rejected; the literal `NONE` is a VALID value meaning "no git / intentionally not
     // tracked" (lets IMPL run in a non-git repo, or before the first commit) — see protocol §9.
-    const cs = exists(path.join(dir, "impl", "code_state.md")) ? readText(path.join(dir, "impl", "code_state.md")) : "";
+    const cs = exists(path.join(dir, "impl", "code_state.md")) ? cached(path.join(dir, "impl", "code_state.md")) : "";
     const unset = (v) => !v || v === "—" || v === "-";
     for (const k of ["BRANCH", "BASE_COMMIT", "LATEST_COMMIT"]) {
       if (unset(getKV(cs, k)))
@@ -552,7 +581,7 @@ function lintSession(root, id, { quick }) {
   if (secName) {
     const secTurns = turnFiles.filter((f) => f.endsWith(`-${secName}.md`))
       .sort((a, b) => turnRank(a) - turnRank(b));
-    if (secTurns.length && !/\bACK\b/.test(readText(path.join(turnsDir, secTurns[0]))))
+    if (secTurns.length && !/\bACK\b/.test(cached(path.join(turnsDir, secTurns[0]))))
       add("WARN", "L8", `${secTurns[0]}: secondary's first turn should ACK the contract`);
   }
 
@@ -589,12 +618,12 @@ function lintSession(root, id, { quick }) {
 
   // L12 ESCALATION — a USER_QUESTION in a turn body should have a matching log line.
   const uqLog = events.filter((e) => e.type === "USER_QUESTION").length;
-  const uqBody = turnFiles.filter((f) => /USER_QUESTION:/.test(readText(path.join(turnsDir, f)))).length;
+  const uqBody = turnFiles.filter((f) => /USER_QUESTION:/.test(cached(path.join(turnsDir, f)))).length;
   if (uqBody > uqLog) add("WARN", "L12", `${uqBody} USER_QUESTION: in turns but ${uqLog} USER_QUESTION log line(s)`);
 
   // L13 TURN-SCHEMA (the Impl line is required only for PRIMARY impl turns; secondary review turns omit it)
   for (const f of turnFiles) {
-    const t = readText(path.join(turnsDir, f));
+    const t = cached(path.join(turnsDir, f));
     for (const need of ["### TURN-", "- Header:", "- Body:", "- Evidence:", "- Handoff:", "PREV:", "NEXT:"])
       if (!t.includes(need)) add("FAIL", "L13", `${f} missing "${need.trim()}"`);
     if (f.startsWith("I")) {
@@ -618,7 +647,7 @@ function lintSession(root, id, { quick }) {
   }
   // each shard's PREV link (if not NEW) must point at an existing sibling shard — keeps the chain intact
   for (const f of turnFiles) {
-    const prev = readText(path.join(turnsDir, f)).match(/^PREV:\s*\[[^\]]*\]\(([^)]+)\)/m);
+    const prev = cached(path.join(turnsDir, f)).match(/^PREV:\s*\[[^\]]*\]\(([^)]+)\)/m);
     if (prev && !exists(path.join(turnsDir, prev[1])))
       add("FAIL", "L14", `${f} PREV target missing: ${prev[1]}`);
   }
@@ -626,7 +655,7 @@ function lintSession(root, id, { quick }) {
   // also resolve — backstop for a write-order regression (predecessor NEXT flipped before the
   // successor shard exists) or a hand-edit that points NEXT at a missing file.
   for (const f of turnFiles) {
-    const next = readText(path.join(turnsDir, f)).match(/^NEXT:\s*\[[^\]]*\]\(([^)]+)\)/m);
+    const next = cached(path.join(turnsDir, f)).match(/^NEXT:\s*\[[^\]]*\]\(([^)]+)\)/m);
     if (next && !exists(path.join(turnsDir, next[1])))
       add("FAIL", "L14", `${f} NEXT target missing: ${next[1]}`);
   }
@@ -641,7 +670,7 @@ function lintSession(root, id, { quick }) {
     if (s.hand === "START" || s.hand === "DONE") continue;
     const af = path.join(dir, "agents", `${s.name.toLowerCase()}.md`);
     if (exists(af)) {
-      const sh = getKV(readText(af), "SELF_HAND");
+      const sh = getKV(cached(af), "SELF_HAND");
       if (sh && sh !== s.hand) add("WARN", "L15", `agents/${s.name.toLowerCase()}.md SELF_HAND=${sh} ≠ HEAD ${s.hand}`);
     }
   }
@@ -660,7 +689,7 @@ function lintSession(root, id, { quick }) {
     for (const tid of resolving) {
       const f = turnFiles.find((x) => x.startsWith(tid + "-"));
       if (!f) continue;
-      const ev = readText(path.join(turnsDir, f)).match(/^-\s*Evidence:\s*(.*)$/m);
+      const ev = cached(path.join(turnsDir, f)).match(/^-\s*Evidence:\s*(.*)$/m);
       if (ev && /^N\/A$/i.test(ev[1].trim()))
         add("WARN", "L19", `${f} resolves a point but Evidence: N/A — cite file:line / command output / doc, or state why none applies`);
     }
@@ -748,7 +777,7 @@ function lintSession(root, id, { quick }) {
   // L16 CATALOG-SYNC
   const idx = path.join(collabDir(root), "index.md");
   if (exists(idx)) {
-    const row = readText(idx).split(/\r?\n/).find((l) => l.split("|").map((c) => c.trim())[1] === id);
+    const row = cached(idx).split(/\r?\n/).find((l) => l.split("|").map((c) => c.trim())[1] === id);
     if (row) {
       const cells = row.split("|").map((c) => c.trim());
       if (cells[3] !== head.status || cells[4] !== head.phase)

@@ -63,7 +63,7 @@ console.log("collab-board self-test\n");
   const { root, id } = scaffold();
   const r = lint(root, id);
   ok("fresh scaffold lints clean (exit 0)", r.code === 0 && !/\bFAIL\b\s+L\d/.test(r.out));
-  ok("fresh scaffold has no L17 (EXPECT removed, P6)", !has(r.out, "L17"));
+  ok("fresh scaffold has no L17 (retired id)", !has(r.out, "L17"));
 }
 
 // 2. L14 CHAIN/ORPHAN — a turn shard with no TURN_COMMIT in the log is an orphan.
@@ -93,7 +93,7 @@ console.log("collab-board self-test\n");
   ok("open-point count mismatch → L4 FAIL", r.code !== 0 && has(r.out, "L4"));
 }
 
-// 5. L6 IMPL-AUTHORITY / git-optional (P1) — a PRIMARY impl turn needs real code_state; `—` is
+// 5. L6 IMPL-AUTHORITY / git-optional — a PRIMARY impl turn needs real code_state; `—` is
 //    rejected, the literal NONE is accepted (no-git).
 {
   const { root, id, dir } = scaffold();
@@ -108,7 +108,7 @@ console.log("collab-board self-test\n");
   ok("code_state=`—` placeholder → L6 FAIL", has(lint(root, id).out, "L6"));
 }
 
-// 6. L15 MIRROR-DRIFT (P7) — skip the START-holder (legitimately stale), still flag others.
+// 6. L15 MIRROR-DRIFT — skip the START-holder (legitimately stale), still flag others.
 {
   const { root, id, dir } = scaffold();
   edit(file(dir, "HEAD.md"), (t) => t
@@ -123,14 +123,15 @@ console.log("collab-board self-test\n");
   ok("L15 skips the START-holder (codex)", !/L15.*codex\.md/.test(r.out));
 }
 
-// 7. P6 — an EXPECT line in HEAD that disagrees with PHASE produces NO L17 (the check is gone).
+// 7. L17 is a retired id — an EXPECT line in HEAD that disagrees with PHASE produces NO L17
+//    (HEAD/v1 has no EXPECT field; the id is intentionally not reused).
 {
   const { root, id, dir } = scaffold();
   edit(file(dir, "HEAD.md"), (t) => t.replace("SEQ: 0", "EXPECT: IMPL\nSEQ: 0"));  // EXPECT≠PHASE(PLAN)
-  ok("EXPECT≠PHASE no longer fails (no L17)", !has(lint(root, id).out, "L17"));
+  ok("EXPECT≠PHASE is not linted (L17 is retired)", !has(lint(root, id).out, "L17"));
 }
 
-// 8. P8 — `activate` reconciles the catalog so L16 stops firing during the PLAN phase.
+// 8. `activate` reconciles the catalog so L16 stops firing during the PLAN phase.
 {
   const { root, id, dir } = scaffold();
   edit(file(dir, "HEAD.md"), (t) => t.replace("SESSION_STATUS: IDLE", "SESSION_STATUS: ACTIVE"));
@@ -139,7 +140,7 @@ console.log("collab-board self-test\n");
   ok("after activate: catalog reconciled (no L16)", !has(lint(root, id).out, "L16"));
 }
 
-// 9. L19 EVIDENCE-ON-RESOLVE (this hardening pass) — a turn that RESOLVES a point with `Evidence: N/A`
+// 9. L19 EVIDENCE-ON-RESOLVE — a turn that RESOLVES a point with `Evidence: N/A`
 //    WARNs (advisory); the same turn with real evidence does not. Whether a claim is "disputed" stays
 //    prose-only — we flag only the literal empty-evidence token on a resolving turn.
 {
@@ -171,7 +172,7 @@ console.log("collab-board self-test\n");
 }
 
 // 11. STALL_HANDOFF (Rule 5 recovery) must replay in the L2 projection — following the protocol's own
-//     recovery path must not diverge from HEAD. (Audit fix: projectLog had no STALL_HANDOFF case.)
+//     recovery path must not diverge from HEAD.
 {
   const { root, id, dir } = scaffold();
   edit(file(dir, "HEAD.md"), (t) => t
@@ -329,6 +330,52 @@ console.log("collab-board self-test\n");
   edit(file(masked.dir, "log.md"), (t) => t.trimEnd() + `\n${farEvent} STALL_CHECK actor=CLAUDE\n`);
   run(["terminal", "--session", masked.id, "--status", "ABORTED"], masked.root);
   ok("clamp does not mask a >1s decrease (L23 still fails)", has(lint(masked.root, masked.id).out, "L23"));
+}
+
+// 20. L1 SPLIT-STATE covers plan/context.md and impl/code_state.md (spec says "any file other
+//     than HEAD.md" — both are first-class session files).
+{
+  const { root, id, dir } = scaffold();
+  edit(file(dir, "plan", "context.md"), (t) => t.trimEnd() + "\n- CLAUDE: START - PRIMARY\n");
+  ok("hand-token in plan/context.md → L1 FAIL", has(lint(root, id).out, "L1"));
+  const cs = scaffold();
+  edit(file(cs.dir, "impl", "code_state.md"), (t) => t.trimEnd() + "\n- CODEX: ON_HOLD - SECONDARY\n");
+  ok("hand-token in impl/code_state.md → L1 FAIL", has(lint(cs.root, cs.id).out, "L1"));
+}
+
+// 21. terminal idempotent re-run: the write order is HEAD → TERMINAL log
+//     line → catalog row, so there are two distinct crash windows plus a conflict path.
+{
+  // (a) post-log/pre-index window: HEAD terminal + exactly one TERMINAL event + a STALE catalog
+  //     row → same-status re-run exits 0, appends NO second TERMINAL, repairs the index, lints clean.
+  const { root, id, dir } = scaffold();
+  const t1 = run(["terminal", "--session", id, "--status", "ABORTED"], root);
+  const idx = path.join(root, ".collab-board", "index.md");
+  edit(idx, (t) => t.replace(`| ${id} | FEATURE | ABORTED |`, `| ${id} | FEATURE | IDLE |`)); // simulate the crash-stale row
+  ok("fixture: stale catalog row → L16 WARN", t1.code === 0 && has(lint(root, id).out, "L16"));
+  const t2 = run(["terminal", "--session", id, "--status", "ABORTED"], root);
+  const termLines = read(file(dir, "log.md")).split(/\r?\n/).filter((l) => /\sTERMINAL\s/.test(l)).length;
+  const r2 = lint(root, id);
+  ok("same-status re-run: exit 0, exactly one TERMINAL line", t2.code === 0 && termLines === 1);
+  ok("same-status re-run repairs the catalog row (no L16, lint clean)", r2.code === 0 && !has(r2.out, "L16"));
+  // (b) conflict: a different-status re-run dies and the log is untouched.
+  const before = read(file(dir, "log.md"));
+  const t3 = run(["terminal", "--session", id, "--status", "COMPLETED"], root);
+  ok("conflicting-status re-run → non-zero exit, log unchanged",
+    t3.code !== 0 && /already logged TERMINAL/.test(t3.out) && read(file(dir, "log.md")) === before);
+}
+{
+  // (c) post-HEAD/pre-log window: HEAD already terminal but no TERMINAL event → re-run completes
+  //     the missing writes (event + catalog) and lints clean.
+  const { root, id, dir } = scaffold();
+  edit(file(dir, "HEAD.md"), (t) => t
+    .replace("SESSION_STATUS: IDLE", "SESSION_STATUS: ABORTED")
+    .replace("- CLAUDE: ON_HOLD - PRIMARY", "- CLAUDE: DONE - PRIMARY")
+    .replace("- CODEX: ON_HOLD - SECONDARY", "- CODEX: DONE - SECONDARY"));
+  const t4 = run(["terminal", "--session", id, "--status", "ABORTED"], root);
+  const hasTerm = /\sTERMINAL\s/.test(read(file(dir, "log.md")));
+  ok("post-HEAD/pre-log crash repair: re-run completes writes, lint clean",
+    t4.code === 0 && hasTerm && lint(root, id).code === 0);
 }
 
 console.log(`\n${failed ? "FAIL" : "PASS"}: ${passed} passed, ${failed} failed`);

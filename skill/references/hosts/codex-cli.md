@@ -22,8 +22,8 @@ the posture or move the orchestrator, don't degrade:
    intermittently with no established trigger — probe every session, not once.
 2. **Child executor probe** — the short `claude -p ... --output-format json` probe from
    `../executors/claude-cli.md`, run through this same shell. This is the end-to-end
-   proof; a local `claude auth status` is NOT sufficient (live-verified divergence:
-   auth-status succeeded while the actual child call was network-blocked).
+   proof; a local `claude auth status` is NOT sufficient (auth-status can succeed while
+   the actual child call is network-blocked).
 3. **Network-enabled sandbox posture** — `codex exec -s workspace-write` denies network
    to spawned children by default; set `[sandbox_workspace_write] network_access = true`
    (config or `-c` override), or run with the user's explicit consent at a wider sandbox.
@@ -87,9 +87,10 @@ unique per session+turn+attempt per the executor spec.
 
 ## Available adapters
 
-`claude-cli` (the inverted default), `codex-cli` is N/A here (executor must differ from
-the PRIMARY), `subagent:<name>` is **unavailable** (no Agent tool in this host), `manual`
-(incl. peer mode).
+`claude-cli` (the inverted default), the `codex-cli` **executor** is N/A here (an executor
+must differ from the PRIMARY — distinct from this `codex-cli` *host*, see the naming note in
+`../adapters.md`), `subagent:<name>` is **unavailable** (no Agent tool in this host),
+`manual` (incl. peer mode).
 
 ## Host quirks
 

@@ -42,9 +42,9 @@ executor spec.
 
 ## Available adapters
 
-All of them: `codex-cli` (default pairing), `claude-cli` is N/A here (PRIMARY is CLAUDE,
-and an executor must differ from the PRIMARY), `subagent:<name>` (the Agent tool exists
-here — spawn with `run_in_background: false`), `manual` (incl. peer mode).
+All of them: `codex-cli` (default pairing), the `claude-cli` executor is N/A here (PRIMARY
+is CLAUDE, and an executor must differ from the PRIMARY), `subagent:<name>` (the Agent tool
+exists here — spawn with `run_in_background: false`), `manual` (incl. peer mode).
 
 ## Host quirks
 

@@ -17,8 +17,8 @@ native installer) and a login (`claude auth login` or `ANTHROPIC_API_KEY`).
 - `claude --version` — binary present.
 - `claude auth status` — returns JSON; require `"loggedIn": true`. **Auth-only — not a
   network proof**: it reads local credentials and can succeed where an actual API call is
-  blocked (live-verified divergence inside a sandboxed host).
-- When the host is `codex-cli` (mandatory there — see `../hosts/codex-cli.md`), and
+  blocked (this divergence occurs in sandboxed hosts).
+- When the host is the Codex CLI (mandatory there — see `../hosts/codex-cli.md`), and
   recommended once per new host otherwise: one short **child probe through the host's own
   shell** — `claude -p "Reply with exactly: OK" --output-format json`; VALID iff exit 0
   and `"is_error": false`. This is what proves the dispatch path end-to-end.
@@ -56,13 +56,13 @@ degrade to self-review.
      ever** — a prefix rule like `Bash(rg *)` admits `rg --pre <cmd>`, which executes an
      arbitrary program that can mutate source outside Edit/Write mediation. `Grep`/`Glob`
      are ripgrep-backed built-ins and cover the search need. This gives **mechanical
-     Rule 7 enforcement for tool-mediated writes** (live-verified: Bash reports unavailable
-     while board edits land).
+     Rule 7 enforcement for tool-mediated writes**: Bash reports unavailable while board
+     edits land.
    - **No bare `--permission-mode acceptEdits` fallback** — it removes the path barrier.
      A blocked legitimate board write goes through the WRITE_BLOCKED scribe path, never
      through widening write permissions.
    - `--safe-mode` — deterministic dispatch: skills/CLAUDE.md/hooks/plugins off; auth,
-     built-in tools, and permission rules work normally (live-verified with `-p`).
+     built-in tools, and permission rules work normally under `-p`.
    - `--model <m>` / `--effort <low|medium|high|xhigh|max>` — **only** when `SESSION.md`
      carries `SecondaryModel:` / `SecondaryEffort:`; absent = inherit the user's config.
      Same effort guidance as the codex-cli executor (never low effort for a gate turn).

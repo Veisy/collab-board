@@ -337,7 +337,11 @@ per §5 and are never scaffolded. The authoritative field set:
 
 ## 10. Lint invariants
 
-`node scripts/collab-board.mjs lint --session <id>` (read-only) recomputes every
+`node "$SKILL/scripts/collab-board.mjs" lint --session <id>` — where `$SKILL` is the
+installed skill directory (Claude Code: `.claude/skills/collab-board/` in the project or
+`~/.claude/skills/collab-board/` globally; Codex: `$CODEX_HOME/skills/collab-board/`,
+default `~/.codex/skills/collab-board/`), run from the project root. It is read-only: it
+recomputes every
 denormalized field from its authoritative source and reports `PASS`/`WARN`/`FAIL`, exiting
 non-zero on any `FAIL`. Run it after **every** turn and before any phase/terminal transition.
 L23 also makes the shell-free `DISPATCH_UTC` timestamp discipline machine-checkable.
