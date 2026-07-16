@@ -83,8 +83,8 @@ a synchronous run means `confirm()` never races a half-written board. For a turn
 to exceed the host's foreground window, use the host's background mechanism (see
 `../hosts/`) and wait for completion **under the host's dispatch watchdog** — never on the
 completion notification alone. Either way the **authoritative completion signal is the
-board landing** (the turn's `HANDOFF` line present in `log.md` — with your hand `START`,
-`SEQ` bumped, the new shard present), never process narration.
+board landing**, never process narration — the landed criterion is Failure path step 1
+below.
 
 ## Failure path (timeout, kill, or INVALID result)
 

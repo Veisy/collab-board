@@ -88,8 +88,8 @@ board-advance check.
 ## Execution mode
 
 Same as codex-cli: foreground ≥ 600000 ms default; the host's background mechanism (under
-its dispatch watchdog) for longer turns; the **board landing — the turn's `HANDOFF` line
-present — is the only completion authority**.
+its dispatch watchdog) for longer turns; the **board landing is the only completion
+authority** (landed criterion: Failure path below).
 
 ## Failure path
 

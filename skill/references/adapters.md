@@ -266,11 +266,8 @@ WRITE, IN THIS ORDER (HEAD.md written before the log HANDOFF line, which is the 
 Output a 3-line summary; the files are the real deliverable.
 ```
 
-After the secondary returns, the PRIMARY runs `confirm()`: first the executor's failure
-checks (INVALID result or board not landed → board-landed check — the attempt's `HANDOFF`
-line present, not merely `HEAD` advanced — then tree-rooted kill-confirm, limit
-classification, partial-turn recovery, retry once, then escalate); then re-read `HEAD.md` +
-the new shard and run
-`node "$SKILL/scripts/collab-board.mjs" lint --session <id>`. If lint FAILs or the secondary
-returned `NOT_MY_TURN`, do **not** silently repair authoritative state — re-delegate a
-correction turn or escalate per the stall rules.
+After the secondary returns, the PRIMARY runs `confirm()` (interface above): an INVALID
+result or an unlanded board goes to the executor's **Failure path** plus the shared
+sections above; on success, re-read `HEAD.md` + the new shard and run
+`node "$SKILL/scripts/collab-board.mjs" lint --session <id>`. On a lint `FAIL` or a
+`NOT_MY_TURN`, re-delegate a correction — never silently repair authoritative state.
