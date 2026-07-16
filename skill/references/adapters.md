@@ -67,9 +67,10 @@ confirm(sessionId) -> ok|fail
 - The PRIMARY **always** runs `confirm()` + lint afterward and never launders authorship.
 
 **Executor section contract** — every `executors/*.md` file specifies, in order: Probes ·
-Dispatch (command + per-session/turn/attempt unique files + stdout/stderr redirection) ·
-Validity rule · Execution mode · Failure path (board-first, confirmed process death,
-limit classification, one fresh retry) · WRITE_BLOCKED detection · Usage-limit signatures
+Dispatch (command + per-session/turn/attempt unique files + stdout/stderr redirection +
+spawn-PID capture) · Validity rule · Execution mode · Failure path (board-landed check,
+tree-rooted kill-confirm, limit classification, partial-turn recovery, one fresh retry) ·
+WRITE_BLOCKED detection · Usage-limit signatures
 (feeding the shared auto-resume below) · Resume (stored-id only, fresh default) ·
 Model/effort keys (`SecondaryModel:`/`SecondaryEffort:`, absent = inherit). Adding a future
 assistant = adding one executor file + one `L18` mapping row; nothing else changes.
@@ -100,6 +101,40 @@ transcribe faithfully — if it is vague, re-delegate.
   authority, `confirm()`, and lint are unchanged (the PRIMARY still performs and verifies
   every write). Return to write-attempts on the next session — the denial is environmental,
   not permanent.
+
+---
+
+## Partial-turn recovery (shared — reconcile before any retry)
+
+A dispatch that dies mid-turn (timeout, kill, crash) leaves a **contiguous prefix** of the
+scoped prompt's 7 ordered writes on disk. Two durability marks partition recovery: the
+`TURN_COMMIT` log line (step 4) is the **content-durability point** — every content-bearing
+write (the shard, the predecessor `NEXT` flip, the `points.md` rows) precedes it — and the
+`HANDOFF` log line (step 7) is the **state-transfer commit point**. "The board landed"
+means exactly one thing: **the dead attempt's `HANDOFF` line is present** (never merely
+"`HEAD` looks advanced"). Reconcile with the log as the oracle — the same replay derivation
+lint uses — before any retry:
+
+- **ROLLBACK** (the attempt's `TURN_COMMIT` is absent): delete the orphan shard, reset the
+  predecessor's `NEXT:` to `pending`, and restore **every changed `points.md` row
+  completely from pre-turn log replay — Status AND Resolved In** (restoring a status while
+  keeping a link to the deleted orphan is corruption). `agents/<secondary>.md` needs no
+  rollback (non-authoritative). Then retry fresh. This is garbage collection below the
+  commit point, not repair of authoritative state — nothing rolled back was ever committed.
+- **ROLL-FORWARD** (the attempt's `TURN_COMMIT` is present): complete the derivable
+  bookkeeping, in write order — any missing `POINT_SET` line, **derived by diffing the
+  persisted step-3 `points.md` rows against pre-turn log replay, never from shard prose**;
+  the `agents/<secondary>.md` update; the `HEAD.md` advance (reconstructed from log replay
+  if torn); and the `HANDOFF` line — all with the PRIMARY's **own** timestamps, and note
+  the roll-forward in the PRIMARY's `agents/` `PRIVATE_NOTES` for audit. Never edit or
+  reorder existing log lines.
+- **Torn-write rules** (the guarantee is scoped to completed contiguous prefixes plus
+  these): **every** mutable whole-file update — `HEAD.md`, `points.md`, the predecessor
+  shard's `NEXT` flip, `agents/<actor>.md`, and any file recovery itself rewrites — is an
+  atomic whole-file replacement; before any replay, a torn **final** `log.md` line (no
+  trailing newline / truncated event) is quarantined — moved verbatim into the PRIMARY's
+  `agents/` `PRIVATE_NOTES` and removed from `log.md` — since a truncated append never
+  reached its commit semantics.
 
 ---
 
@@ -148,11 +183,17 @@ relay is auditable. "Resume" is emulated by the user keeping the same external c
 
 ### Peer mode (two terminals, one board)
 
-MANUAL also covers the fully **self-driving** secondary: the user opens the second model in
-its own terminal/program, points it at the same `.collab-board/` session, and each agent
-runs the protocol natively — reading `PROTOCOL.md` once, acting **only** when `HEAD.md`
-shows its own hand at `START`, and writing its own turns. No dispatch, no relay, no prompt
-printing: the `START` token is the mutex and the stall timers (Rule 5) are the pacing. A
+MANUAL also covers two interactive assistants sharing one board: the user opens the second
+model in its own terminal/program, points it at the same `.collab-board/` session, and each
+agent runs the protocol natively — reading `PROTOCOL.md` once, acting **only** when
+`HEAD.md` shows its own hand at `START`, and writing its own turns. No dispatch, no relay,
+no prompt printing: the `START` token is the mutex and the stall timers (Rule 5) are the
+backstop. Peer mode is **human-paced by default**: an interactive runtime generally cannot
+wake itself, so the user nudges each side ("your turn") when the other's turn lands — a
+generic polling loop is *not* assumed. Where a host does have a bounded self-wake (e.g.
+chained background sleeps), an agent may poll cheaply between nudges — re-read **only** the
+`HEAD.md` `## State` hand line, never the tree — but that is a host-specific convenience,
+not part of the mode. A
 self-authored turn omits `via=` entirely (it is optional in the log grammar) — authorship
 is already carried by the shard name, `TURN_COMMIT actor=`, and the hand chain. This is the
 recommended way to pair two interactive assistants without any automation.
@@ -225,9 +266,10 @@ Output a 3-line summary; the files are the real deliverable.
 ```
 
 After the secondary returns, the PRIMARY runs `confirm()`: first the executor's failure
-checks (INVALID result or unchanged `HEAD.md` → board-first check, confirmed process
-death, limit classification, retry once, then escalate); then re-read `HEAD.md` + the new
-shard and run
+checks (INVALID result or board not landed → board-landed check — the attempt's `HANDOFF`
+line present, not merely `HEAD` advanced — then tree-rooted kill-confirm, limit
+classification, partial-turn recovery, retry once, then escalate); then re-read `HEAD.md` +
+the new shard and run
 `node "$SKILL/scripts/collab-board.mjs" lint --session <id>`. If lint FAILs or the secondary
 returned `NOT_MY_TURN`, do **not** silently repair authoritative state — re-delegate a
 correction turn or escalate per the stall rules.

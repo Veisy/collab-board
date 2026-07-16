@@ -35,10 +35,12 @@ the posture or move the orchestrator, don't degrade:
 - `node .../collab-board.mjs` subcommands run in the shell as usual (the sandbox permits
   process spawn; it is writes and network that are gated).
 - **Timeout is owned by this host's shell runner** — `codex exec` has no per-command
-  timeout flag. Give a dispatched secondary turn ≥ 600 s and confirm the child is dead
-  (kill-confirm) before any retry, per the executor failure path.
+  timeout flag. Give a dispatched secondary turn ≥ 600 s and kill-confirm before any retry
+  per the executor failure path: a process-**tree** check rooted at the
+  `Start-Process -PassThru` identity captured below (missing identity = UNKNOWN = possibly
+  alive, never retry over it; never match by process name).
 - No background-notification mechanism is assumed: for long turns, poll the **board**
-  (the authoritative completion signal), never the process.
+  (the turn's `HANDOFF` line is the landed criterion), never the process.
 
 On Windows PowerShell, do not paste the executor's POSIX `<`/`>` form (`<` is a parser
 error and Windows PowerShell 5.1 can re-encode native redirected output). Use redirected
@@ -58,9 +60,11 @@ $start = @{
   RedirectStandardInput = $promptPath
   RedirectStandardOutput = $outPath
   RedirectStandardError = $errPath
-  WindowStyle = 'Hidden'; Wait = $true; PassThru = $true
+  WindowStyle = 'Hidden'; PassThru = $true
 }
 $child = Start-Process @start
+Set-Content -Path $pidPath -Value $child.Id -Encoding ascii  # spawn identity BEFORE waiting
+$child.WaitForExit()
 if ($child.ExitCode -ne 0) { throw "claude exited $($child.ExitCode)" }
 ```
 

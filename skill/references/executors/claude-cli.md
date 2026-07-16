@@ -46,8 +46,14 @@ degrade to self-review.
      --allowedTools "Read" "Grep" "Glob" "Edit(.collab-board/**)" "Write(.collab-board/**)" \
      < "<scratch>/prompt-<slug>-<TURN_ID>-a<attempt>.txt" \
      > "<scratch>/out-<slug>-<TURN_ID>-a<attempt>.json" \
-     2> "<scratch>/err-<slug>-<TURN_ID>-a<attempt>.txt"
+     2> "<scratch>/err-<slug>-<TURN_ID>-a<attempt>.txt" &
+   echo $! > "<scratch>/pid-<slug>-<TURN_ID>-a<attempt>.txt"
+   wait $!
    ```
+
+   The `& … wait $!` pair keeps foreground semantics while capturing the **spawn PID** to a
+   per-attempt pidfile (same rule and rationale as the codex-cli executor: kill-confirm is
+   rooted at this identity; no captured identity = UNKNOWN).
 
    - `--tools` is the available built-in surface; omitting it leaves ambient tools such as
      Bash available even when `--allowedTools` is present. `--allowedTools` controls which
@@ -81,17 +87,20 @@ board-advance check.
 
 ## Execution mode
 
-Same as codex-cli: foreground ≥ 600000 ms default; the host's background mechanism for
-longer turns; the **board advancing is the only completion authority**.
+Same as codex-cli: foreground ≥ 600000 ms default; the host's background mechanism (under
+its dispatch watchdog) for longer turns; the **board landing — the turn's `HANDOFF` line
+present — is the only completion authority**.
 
 ## Failure path
 
-Byte-identical to the codex-cli executor: board-first check → confirm the child process
-is dead (no surviving `claude` child of this dispatch — double-writer guard) → classify a
-limit (signatures below — a limit-shaped result skips the retry and enters the shared
-auto-resume in `../adapters.md`) → one fresh retry with new `-a<attempt>` names → escalate
-per Rule 5 / §4 (pause, don't degrade). `NOT_MY_TURN` prevention likewise: check `HEAD.md`
-before dispatching.
+Byte-identical to the codex-cli executor: board-landed check (the attempt's `HANDOFF` line,
+never merely `HEAD` advanced) → kill-confirm as a process-tree check rooted at the captured
+spawn PID (missing identity = UNKNOWN = possibly alive, never retry over it; never match by
+process name) → classify a limit (signatures below — a limit-shaped result skips the retry
+and enters the shared auto-resume in `../adapters.md`) → reconcile partial writes per the
+shared partial-turn recovery (`../adapters.md`) → one fresh retry with new `-a<attempt>`
+names → escalate per Rule 5 / §4 (pause, don't degrade). `NOT_MY_TURN` prevention likewise:
+check `HEAD.md` before dispatching.
 
 ## WRITE_BLOCKED
 

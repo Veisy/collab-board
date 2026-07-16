@@ -15,9 +15,30 @@ Native: this skill loads from `.claude/skills/collab-board/` (project) or
   `timeout: 600000`** (the tool maximum) on a dispatch, since secondary turns typically
   run 3–6 minutes.
 - For a turn expected to exceed 10 minutes, run the same dispatch with Bash
-  `run_in_background: true` and wait for the completion notification; then apply the
-  executor's validity rule as usual. Strict alternation means blocking foreground loses
-  nothing — the PRIMARY has no legal board work while the SECONDARY holds `START`.
+  `run_in_background: true` — but **never wait on the completion notification alone**: a
+  hung child or a lost notification would otherwise stall the loop with nothing scheduled
+  to wake you. Pair every background dispatch with the **dispatch watchdog** (the note is
+  written in two stages — the spawn PID does not exist until spawn):
+  1. **Before** dispatching, persist a dispatch note in `agents/<primary>.md`
+     `PRIVATE_NOTES` (turn id, attempt, start UTC, expected duration) — the §4 wait note's
+     sibling; it is what `/collab-continue` recovers from if the session dies mid-wait.
+  2. Dispatch with the executor's PID-capture form (`<dispatch> & echo $! > <pidfile>;
+     wait $!` — in background mode the whole compound runs inside the backgrounded Bash
+     call, so `$!` is captured the instant the child spawns), then **immediately update the
+     note** with the root PID by atomic whole-file replacement. A capture that failed
+     leaves the identity UNKNOWN in the note — kill-confirm then treats the dispatch as
+     possibly alive (executor rule), never as dead.
+  3. Alongside the dispatch, start a background `sleep` sized to the session's `CHECK`
+     window (chain bounded sleeps if capped).
+  4. On **whichever wakes first** (notification or watchdog): check the board first (the
+     turn's `HANDOFF` line = landed), then the dispatch's process tree via the noted
+     PID. Tree alive → reschedule the watchdog and keep waiting. Tree dead + board not
+     landed → the executor's failure path. Clear the note once the turn is confirmed.
+  The watchdog is a bounded fallback **within the same host channel** (a background sleep's
+  wake is itself a notification), not an independent one — the persisted note plus
+  `/collab-continue` remains the crash backstop. Strict alternation means blocking
+  foreground loses nothing — the PRIMARY has no legal board work while the SECONDARY holds
+  `START`; prefer foreground whenever the turn fits the window.
 
 ## Waiting out a usage limit (the host wait mechanism)
 

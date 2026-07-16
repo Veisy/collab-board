@@ -166,7 +166,8 @@ for the full mechanism, the dispatch spec, and the scoped-prompt skeleton; the e
   names unique per **session**, turn, and attempt (scratch outlives sessions and turn ids
   repeat) — then run one foreground `codex exec` process (explicit timeout ≥ 600000 ms) with
   stdout/stderr redirected to files, so the rendered transcript (tens of KB is normal) never
-  floods your context. Result VALID = exit 0 AND the last-message output file exists
+  floods your context, and the **spawn PID captured to a per-attempt pidfile** (the identity
+  kill-confirm is rooted at). Result VALID = exit 0 AND the last-message output file exists
   non-empty, read only after exit. Fresh thread every turn is the default. The exact command
   and flags, resume form, and failure path: `references/executors/codex-cli.md`.
 - **`claude-cli` (the inverted pairing — SECONDARY=CLAUDE):** dispatch the local Claude CLI
@@ -183,19 +184,26 @@ for the full mechanism, the dispatch spec, and the scoped-prompt skeleton; the e
   separate terminals self-driving on the same board via the `START` mutex (`adapters.md`).
 
 Then **verify, don't trust** — the board is the proof, not the narration. The completion
-signal is the **board advancing**: your hand is now `START`, `SEQ` is bumped, and the new
-`turns/<id>-<secondary>` shard exists.
+signal is the **board landing**: the turn's `HANDOFF` line is present in `log.md` (the
+commit point) — with your hand now `START`, `SEQ` bumped, and the new
+`turns/<id>-<secondary>` shard present. (For a long background dispatch, wait under the
+host's dispatch watchdog — `references/hosts/` — never on the completion notification alone.)
 
 On a timeout, kill, or INVALID result, in order:
-1. **Check the board first.** If it advanced, the writes landed — proceed to confirm.
-2. Otherwise **confirm the dispatch's process tree is dead** (double-writer guard).
+1. **Check the board first.** The landed criterion is the `HANDOFF` line, never merely
+   "`HEAD` looks advanced" — landed means proceed to confirm.
+2. Otherwise **confirm the dispatch's process tree is dead** (double-writer guard): a tree
+   check rooted at the captured spawn PID; **missing identity = UNKNOWN = possibly alive —
+   keep waiting or escalate, never retry over it**; never match by process name.
 3. **Classify a usage limit before retrying.** A limit-shaped result skips the retry —
    schedule the auto-resume instead (see the resource-limits bullet below).
 4. If the secondary returned a concrete `WRITE_BLOCKED:` verdict with the board unchanged,
    **scribe-relay it** instead of retrying: log `via=<adapter> relayed_by=<PRIMARY>` and stamp
    your own relay-time UTC — never the secondary's proposed timestamps. After the first such
    relay you may adopt the scribe-first posture for the rest of the session (`adapters.md`).
-5. Otherwise **retry once, fresh**; if that also fails, escalate (`codex login status` for an
+5. Otherwise **reconcile any partial writes** (the shared partial-turn recovery in
+   `adapters.md`: rollback below the attempt's `TURN_COMMIT`, roll-forward above it), then
+   **retry once, fresh**; if that also fails, escalate (`codex login status` for an
    auth failure).
 
 On success, re-read only `HEAD.md` + the new shard and run `lint`. On a `FAIL` or a
