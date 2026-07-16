@@ -128,22 +128,14 @@ Valid hand-states: `START` · `WORKING` · `ON_HOLD` · `DONE`.
   to consult*. Do **not** cope by degrading: never let the PRIMARY's own self-review stand in for
   the adversarial gate, never lower a model's effort/quality, and never author ahead of an ungated
   backlog. A usage limit is a **scheduling problem**: the board is crash-safe after every
-  `HANDOFF`, so the moment between two confirmed turns is a **saveable point** — pause there and
-  wait the limit out, then resume on your own:
-  1. Extract the reset time when the failure output names one ("try again at/in …", an embedded
-     reset timestamp — see the executor's signature list); plan the wake shortly after it (a
-     ~2-minute buffer absorbs clock skew). No reset time stated → back off: first retry after
-     15 minutes, doubling per attempt, capped at 60 minutes. Three consecutive capped-backoff
-     wakes returning the same no-reset signature are a hard block (an exhausted quota never
-     self-resets) — stop scheduling and escalate to the user.
-  2. Record the wait in your own `agents/<primary>.md` `PRIVATE_NOTES` (limit signature, expected
-     reset, attempt count). Private notes are non-authoritative, so no log event or schema change
-     is involved — the board itself stays untouched until the next real turn.
-  3. **Announce, don't ask**: tell the user which model is limited, the last safe cursor, and when
-     you will resume — then schedule the wake through the host's wait mechanism
-     (`references/hosts/`) and continue without user input.
-  4. On wake, retry the dispatch **once** — the dispatch itself is the probe; never burn extra
-     calls polling a limit. Still limit-shaped → repeat from step 1 with the next backoff.
+  `HANDOFF`, so the moment between two confirmed turns is a **saveable point** — pause there,
+  record the wait in your own `agents/<primary>.md` `PRIVATE_NOTES` (limit signature, expected
+  reset, attempt count — non-authoritative, so the board stays untouched), and **announce, don't
+  ask**: tell the user which model is limited, the last safe cursor, and when you will resume —
+  then continue without user input. For the wait itself the PRIMARY **must** follow the canonical
+  wake/retry/backoff procedure in the skill's `references/adapters.md` "Usage-limit auto-resume"
+  (reset-time extraction, backoff ladder, hard-block escalation, dispatch-as-probe) together with
+  its host file's wait mechanism (`references/hosts/`) — never improvise a schedule.
   A limit wait is **not** a stall: Rule 5 timers measure a *silent* actor, while a waiting PRIMARY
   knows exactly why the board is idle — never force `STALL_HANDOFF` over a known limit (seizing
   the secondary's turn is the degradation banned above). Lint's L9 staleness WARN on resume is

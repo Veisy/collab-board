@@ -35,14 +35,12 @@ yourself, and *delegate* each SECONDARY turn to the other model through its adap
 
 ## Language
 
-Narrate to the user in **the language of their prompt** (a Turkish prompt → Turkish progress
-notes, questions, and summaries); your chat output is never parsed by `lint` and never read by the
-SECONDARY, so it is free to localize. But **never translate the machine tokens** — `HEAD.md`
-keys, hand-states, `PHASE`, gate names, log event names, point `Status` values, `SCHEMA:` ids, and
-actor/adapter names are fixed ASCII/English literals the parsers match by regex; a translated token
-silently fails to parse and diverges under lint (`L2`). Turn-body prose may follow the working
-language, but default to ASCII while the `codex-cli` adapter is active — its write path corrupts
-pre-existing non-ASCII to mojibake even in a file it merely re-touches (see lint `L21`).
+Narrate to the user in **the language of their prompt** — chat output is never parsed by
+`lint` nor read by the SECONDARY, so it is free to localize. Board files are different:
+**never translate a machine token** (the fixed ASCII literals enumerated in `PROTOCOL.md` §9;
+lint `L2`), and default turn-body prose to ASCII while the `codex-cli` adapter is active — its
+write path corrupts pre-existing non-ASCII to mojibake even in a file it merely re-touches
+(lint `L21`).
 
 ## The bundled script
 
@@ -157,50 +155,29 @@ catalog, and append a `STATE_SET` line activating yourself — all before step 6
 ## Delegating the SECONDARY's turn
 
 When `HEAD.md` shows the SECONDARY at `START`, you do **not** take its turn — you delegate it
-through the adapter named in `SESSION.md` `SecondaryAdapter:`. **Read `references/adapters.md`**
-for the full mechanism, the dispatch spec, and the scoped-prompt skeleton; the essentials:
+through the adapter named in `SESSION.md` `SecondaryAdapter:`. Before dispatching, **read
+`references/adapters.md`** (the mechanism, shared scribe/auto-resume rules, and the
+scoped-prompt skeleton) **and the executor file matching the adapter** — they carry the exact
+probes, command, validity rule, and failure path; don't restate them from memory:
 
-- **`codex-cli` (default; `codex` = legacy alias):** dispatch the **local Codex CLI directly**
-  — no plugin. Probe once per session (`codex --version`, `codex login status`), write the
-  scoped prompt to a UTF-8 (no BOM, LF) file in a scratch dir outside the session tree — file
-  names unique per **session**, turn, and attempt (scratch outlives sessions and turn ids
-  repeat) — then run one foreground `codex exec` process (explicit timeout ≥ 600000 ms) with
-  stdout/stderr redirected to files, so the rendered transcript (tens of KB is normal) never
-  floods your context. Result VALID = exit 0 AND the last-message output file exists
-  non-empty, read only after exit. Fresh thread every turn is the default. The exact command
-  and flags, resume form, and failure path: `references/executors/codex-cli.md`.
-- **`claude-cli` (the inverted pairing — SECONDARY=CLAUDE):** dispatch the local Claude CLI
-  headless from the project root, with the available-tool surface restricted and writes
-  path-scoped to the board (never a `Bash(...)` rule, never bare `acceptEdits`) — that
-  mechanically enforces Rule 7 for tool-mediated writes. PRIMARY injects `DISPATCH_UTC`; the
-  secondary uses ordered millisecond offsets and lint L23 rejects decreasing or far-future
-  time. Result VALID = exit 0 AND the stdout JSON parses AND `is_error:false` AND `result`
-  non-empty. The exact command and flags: `references/executors/claude-cli.md`; host
-  preflights: `references/hosts/`.
+- **`codex-cli`** (default; `codex` = legacy alias): the local Codex CLI directly, no plugin —
+  `references/executors/codex-cli.md`.
+- **`claude-cli`** (the inverted pairing — SECONDARY=CLAUDE): the local Claude CLI headless,
+  writes path-scoped to the board — `references/executors/claude-cli.md`; host preflights in
+  `references/hosts/`.
 - **`subagent:<name>`** / **`manual`:** another write-capable subagent type (spawn with
-  `run_in_background: false`), or a printed prompt you relay and then scribe yourself (stamp
-  `relayed by` for audit). `manual` also covers **peer mode** — two interactive agents in
-  separate terminals self-driving on the same board via the `START` mutex (`adapters.md`).
+  `run_in_background: false`), or a printed prompt you relay and then scribe yourself. `manual`
+  also covers **peer mode** — two interactive agents self-driving on one board (`adapters.md`).
 
 Then **verify, don't trust** — the board is the proof, not the narration. The completion
 signal is the **board advancing**: your hand is now `START`, `SEQ` is bumped, and the new
-`turns/<id>-<secondary>` shard exists.
-
-On a timeout, kill, or INVALID result, in order:
-1. **Check the board first.** If it advanced, the writes landed — proceed to confirm.
-2. Otherwise **confirm the dispatch's process tree is dead** (double-writer guard).
-3. **Classify a usage limit before retrying.** A limit-shaped result skips the retry —
-   schedule the auto-resume instead (see the resource-limits bullet below).
-4. If the secondary returned a concrete `WRITE_BLOCKED:` verdict with the board unchanged,
-   **scribe-relay it** instead of retrying: log `via=<adapter> relayed_by=<PRIMARY>` and stamp
-   your own relay-time UTC — never the secondary's proposed timestamps. After the first such
-   relay you may adopt the scribe-first posture for the rest of the session (`adapters.md`).
-5. Otherwise **retry once, fresh**; if that also fails, escalate (`codex login status` for an
-   auth failure).
+`turns/<id>-<secondary>` shard exists. On a timeout, kill, INVALID result, or `WRITE_BLOCKED:`
+verdict, follow the executor's **Failure path** and the shared scribe/auto-resume rules in
+`adapters.md` (board-first check, confirmed process death, limit classification, scribe-relay,
+one fresh retry) — never improvise a recovery.
 
 On success, re-read only `HEAD.md` + the new shard and run `lint`. On a `FAIL` or a
-`NOT_MY_TURN`, re-delegate a correction — never silently patch authoritative state. (Full
-failure paths, scribe-relay, and the resume caveat are detailed in `adapters.md`.)
+`NOT_MY_TURN`, re-delegate a correction — never silently patch authoritative state.
 
 ## Phase transition, completion, and recovery
 
@@ -218,19 +195,14 @@ failure paths, scribe-relay, and the resume caveat are detailed in `adapters.md`
 - **Stall** (Rule 5), **deadlock** (Rule 6, PRIMARY decides after >3 unresolved turns on a
   point), and **user escalation** (Rule 9) are defined in `PROTOCOL.md`; `lint` flags stalls
   and undecided deadlocks.
-- **Resource limits — wait them out, don't stop.** If the SECONDARY becomes unavailable
-  mid-session (a rate/usage limit — its delegation fails in a limit-shaped way; each executor file
-  lists the signatures), do **not** lower the bar to cope: never substitute your own self-review
-  for the adversarial gate, never author ahead of an ungated backlog. But do not end the run
-  either: pause at a **saveable point** — the board is crash-safe after every `HANDOFF`, so
-  between two confirmed turns nothing is lost — note the wait in `agents/<you>.md`, **announce,
-  don't ask** (which model is limited, the last safe cursor, when you will resume), then schedule
-  your own wake at the limit's reset time via the host's wait mechanism (`references/hosts/`) and
-  retry the dispatch once when it fires, backing off if still limited. A limit wait is not a
-  Rule 5 stall — never `STALL_HANDOFF` over it. Full procedure: `PROTOCOL.md` §4. Only a limit on
-  the **PRIMARY's own** model ends the run (the host stops the orchestrator); the user resumes
-  that later with `/collab-continue`. collab-board cannot read a model's usage %; it reacts to
-  observable signals only.
+- **Resource limits — wait them out, don't stop.** A rate/usage-limited SECONDARY is
+  unavailable, not wrong to consult: never substitute your own self-review for the adversarial
+  gate, never author ahead of an ungated backlog — and never end the run over it. Pause at the
+  saveable point (the board is crash-safe after every `HANDOFF`), **announce, don't ask**, and
+  follow the canonical wait/retry procedure in `references/adapters.md` "Usage-limit
+  auto-resume" + your host's wait mechanism (`references/hosts/`). A limit wait is never a
+  Rule 5 stall (`PROTOCOL.md` §4). Only a limit on the **PRIMARY's own** model ends the run;
+  the user resumes later with `/collab-continue`.
 - **Reset** a session (e.g. to start the same slug fresh) with `reset --session <id>`; it
   archives the old tree (never deletes) and re-scaffolds. A brand-new session is just another
   `new` — prior sessions are untouched immutable trees.

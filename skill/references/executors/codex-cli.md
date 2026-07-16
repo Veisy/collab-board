@@ -84,9 +84,10 @@ process narration.
 2. Otherwise **confirm process death** before anything else: the dispatched process has
    exited and no `codex` child of this dispatch survives (a surviving process could still
    write the board while a retry runs — the double-writer race).
-3. **Classify a limit before retrying** (signatures below). A limit-shaped result skips the
-   retry entirely and enters the shared usage-limit auto-resume (`../adapters.md`) — retrying
-   straight into a hard limit only burns the one retry this path allows.
+3. **Classify a limit before retrying** (signatures below). Retry-vs-schedule for a matched
+   signature is decided **only** by the shared usage-limit auto-resume rules in
+   `../adapters.md` (including ambiguous no-reset handling) — never retry straight into a
+   classified hard limit.
 4. Retry **once**, fresh, with new `-a<attempt>` file names. If that also fails, escalate
    per the stall rules (`PROTOCOL.md` Rule 5 / §4 resource-exhaustion: pause, don't degrade).
 5. `NOT_MY_TURN` is not a failure of this path: the PRIMARY prevents it by checking `HEAD.md`
@@ -110,8 +111,9 @@ one literal (wording shifts across CLI versions): `usage limit` · `rate limit` 
 `rate_limit` · `429` · `quota` · `too many requests` · `try again (at|in)` (e.g. "You've
 hit your usage limit. Try again at <time>."). On a match, extract the reset time when the
 message names one — an explicit timestamp, or a relative "try again in Xh Ym" added to the
-host's UTC now — and hand it to the shared auto-resume (`../adapters.md`); no stated reset
-means the backoff ladder applies. An auth failure (`codex login status` failing, `401`,
+host's UTC now — and hand the match plus any extracted reset to the shared auto-resume
+(`../adapters.md`), whose canonical rules decide retry vs schedule (including a match with
+no reset language). An auth failure (`codex login status` failing, `401`,
 "not logged in") is **not** a limit — that path pauses for the user.
 
 ## Resume (deliberate multi-turn memory only)

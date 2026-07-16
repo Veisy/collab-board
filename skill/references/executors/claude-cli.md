@@ -88,8 +88,9 @@ longer turns; the **board advancing is the only completion authority**.
 
 Byte-identical to the codex-cli executor: board-first check → confirm the child process
 is dead (no surviving `claude` child of this dispatch — double-writer guard) → classify a
-limit (signatures below — a limit-shaped result skips the retry and enters the shared
-auto-resume in `../adapters.md`) → one fresh retry with new `-a<attempt>` names → escalate
+limit (signatures below; retry-vs-schedule for a matched signature is decided **only** by
+the shared auto-resume rules in `../adapters.md`, including ambiguous no-reset handling) →
+one fresh retry with new `-a<attempt>` names → escalate
 per Rule 5 / §4 (pause, don't degrade). `NOT_MY_TURN` prevention likewise: check `HEAD.md`
 before dispatching.
 
@@ -108,8 +109,9 @@ file, case-insensitive — never one literal (wording shifts across CLI versions
 `usage limit` · `rate limit` / `rate_limit` · `429` · `quota` ·
 `resets at` · `try again (at|in)` (subscription-limit messages embed a reset time, e.g.
 "Claude AI usage limit reached|<reset>"). On a match, extract the
-embedded reset timestamp/epoch when present and hand it to the shared auto-resume
-(`../adapters.md`); no stated reset means the backoff ladder applies. An auth failure
+embedded reset timestamp/epoch when present and hand the match plus any extracted reset to
+the shared auto-resume (`../adapters.md`), whose canonical rules decide retry vs schedule
+(including a match with no reset language). An auth failure
 (`401`, `"loggedIn": false`, invalid API key) is **not** a limit — that path pauses for
 the user.
 

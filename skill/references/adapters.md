@@ -105,15 +105,16 @@ transcribe faithfully — if it is vague, re-delegate.
 
 ## Usage-limit auto-resume (shared — any CLI executor)
 
-A **limit-shaped** INVALID result (each executor lists its signatures) is a scheduling
-problem, not a retriable failure and not a stall: do **not** burn the failure path's single
-fresh retry into a hard limit, and never `STALL_HANDOFF` over a known wait. Classify FIRST,
-then follow `PROTOCOL.md` §4's procedure: pause at the saveable point, note the wait in the
-PRIMARY's `agents/` file (signature, expected reset, attempt count), announce to the user
-(never block on them), schedule a wake at the
+This section is the **canonical** wake/retry/backoff procedure (`PROTOCOL.md` §4 carries the
+principle: never degrade, never stop, a limit wait is not a stall). A **limit-shaped** INVALID
+result (each executor lists its signatures) is a scheduling problem, not a retriable failure
+and not a stall: do **not** burn the failure path's single fresh retry into a hard limit, and
+never `STALL_HANDOFF` over a known wait. Classify FIRST, then: pause at the saveable point,
+note the wait in the PRIMARY's `agents/` file (signature, expected reset, attempt count),
+announce to the user (never block on them), schedule a wake at the
 stated reset time + ~2 min (no stated reset → 15 min backoff, doubling per attempt, 60-min
 cap) through the host's wait mechanism (`hosts/`), then re-dispatch **once** — the dispatch
-itself is the probe. A match carrying **no reset language** is ambiguous — give it the
+itself is the probe; never burn extra calls polling a limit. A match carrying **no reset language** is ambiguous — give it the
 failure path's single fresh retry first and classify it as a limit only when the same
 signature repeats. Three consecutive capped-backoff wakes returning the same no-reset
 signature are a **hard block** (an exhausted quota never self-resets): stop scheduling and
