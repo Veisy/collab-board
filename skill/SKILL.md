@@ -170,11 +170,15 @@ probes, command, validity rule, and failure path; don't restate them from memory
   also covers **peer mode** — two interactive agents self-driving on one board (`adapters.md`).
 
 Then **verify, don't trust** — the board is the proof, not the narration. The completion
-signal is the **board advancing**: your hand is now `START`, `SEQ` is bumped, and the new
-`turns/<id>-<secondary>` shard exists. On a timeout, kill, INVALID result, or `WRITE_BLOCKED:`
-verdict, follow the executor's **Failure path** and the shared scribe/auto-resume rules in
-`adapters.md` (board-first check, confirmed process death, limit classification, scribe-relay,
-one fresh retry) — never improvise a recovery.
+signal is the **board landing**: the turn's `HANDOFF` line is present in `log.md` (the
+commit point) — with your hand now `START`, `SEQ` bumped, and the new
+`turns/<id>-<secondary>` shard present — never merely "`HEAD` looks advanced". For a long
+background dispatch, wait under the host's dispatch watchdog (`references/hosts/`), never on
+the completion notification alone. On a timeout, kill, INVALID result, or `WRITE_BLOCKED:`
+verdict, follow the executor's **Failure path** and the shared rules in `adapters.md`
+(board-first landed check, PID-rooted kill-confirm — missing identity means possibly alive,
+never retry over it — limit classification, scribe-relay, partial-turn recovery, one fresh
+retry) — never improvise a recovery.
 
 On success, re-read only `HEAD.md` + the new shard and run `lint`. On a `FAIL` or a
 `NOT_MY_TURN`, re-delegate a correction — never silently patch authoritative state.

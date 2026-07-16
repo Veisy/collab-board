@@ -39,8 +39,16 @@ usage-limit wait, and never grounds to degrade to self-review.
      -o "<scratch>/last-<slug>-<TURN_ID>-a<attempt>.txt" \
      - < "<scratch>/prompt-<slug>-<TURN_ID>-a<attempt>.txt" \
      > "<scratch>/stdout-<slug>-<TURN_ID>-a<attempt>.txt" \
-     2> "<scratch>/stderr-<slug>-<TURN_ID>-a<attempt>.txt"
+     2> "<scratch>/stderr-<slug>-<TURN_ID>-a<attempt>.txt" &
+   echo $! > "<scratch>/pid-<slug>-<TURN_ID>-a<attempt>.txt"
+   wait $!
    ```
+
+   The `& … wait $!` pair keeps foreground semantics while capturing the **spawn PID** to a
+   per-attempt pidfile — the identity the failure path's kill-confirm is rooted at. A host
+   whose shell exposes the child PID another way (e.g. PowerShell `Start-Process -PassThru`,
+   see `../hosts/codex-cli.md`) persists that identity instead; a dispatch with no captured
+   identity leaves kill-confirm UNKNOWN (below).
 
    - `--skip-git-repo-check` — add **only** when the target project is not a git repository.
    - `--json` — add when you intend to allow a later `resume` of this thread: capture the
@@ -73,22 +81,31 @@ is (exit code, `-o` file).
 Foreground with a ≥ 600000 ms timeout is the **default** — typical turns run 3–6 minutes and
 a synchronous run means `confirm()` never races a half-written board. For a turn you expect
 to exceed the host's foreground window, use the host's background mechanism (see
-`../hosts/`) and wait for completion. Either way the **authoritative completion signal is
-the board advancing** (your hand `START`, `SEQ` bumped, the new shard present), never
-process narration.
+`../hosts/`) and wait for completion **under the host's dispatch watchdog** — never on the
+completion notification alone. Either way the **authoritative completion signal is the
+board landing** (the turn's `HANDOFF` line present in `log.md` — with your hand `START`,
+`SEQ` bumped, the new shard present), never process narration.
 
 ## Failure path (timeout, kill, or INVALID result)
 
-1. **Check the board first.** If `HEAD.md` advanced and the new shard exists, the writes
-   landed — proceed to `confirm()` + lint regardless of how the process ended.
-2. Otherwise **confirm process death** before anything else: the dispatched process has
-   exited and no `codex` child of this dispatch survives (a surviving process could still
-   write the board while a retry runs — the double-writer race).
+1. **Check the board first.** The landed criterion is the turn's `HANDOFF` line present in
+   `log.md` (the commit point) — never merely "`HEAD.md` looks advanced". Landed → proceed
+   to `confirm()` + lint regardless of how the process ended.
+2. Otherwise **confirm process death** before anything else: a process-**tree** check rooted
+   at the captured spawn PID (the per-attempt pidfile) — the root has exited **and** no
+   descendant survives (parent-PID walk: `pgrep -P` / `Get-CimInstance Win32_Process`; a
+   survivor could still write the board while a retry runs — the double-writer race).
+   **Never** match globally by process name (another `codex` — the user's own TUI, another
+   session — false-positives both ways). **Missing identity = UNKNOWN, not dead**: treat the
+   dispatch as possibly alive — keep waiting under the watchdog or escalate; never retry
+   over an UNKNOWN.
 3. **Classify a limit before retrying** (signatures below). Retry-vs-schedule for a matched
    signature is decided **only** by the shared usage-limit auto-resume rules in
    `../adapters.md` (including ambiguous no-reset handling) — never retry straight into a
    classified hard limit.
-4. Retry **once**, fresh, with new `-a<attempt>` file names. If that also fails, escalate
+4. **Reconcile partial writes** per the shared partial-turn recovery (`../adapters.md`):
+   rollback below the attempt's `TURN_COMMIT`, roll-forward above it. Only then retry
+   **once**, fresh, with new `-a<attempt>` file names. If that also fails, escalate
    per the stall rules (`PROTOCOL.md` Rule 5 / §4 resource-exhaustion: pause, don't degrade).
 5. `NOT_MY_TURN` is not a failure of this path: the PRIMARY prevents it by checking `HEAD.md`
    *before* dispatching (never burn a dispatch to learn whose turn it is), and if the
