@@ -149,6 +149,9 @@ codex exec resume <thread-id> -c 'sandbox_mode="workspace-write"' \
 via the `-c sandbox_mode=...` config override; if the installed version rejects that
 override, downgrade to fresh. No stored thread id → fresh. Never resume by guesswork
 (`--last` is repo-scoped, not collab-session-scoped, and can bind to a stale thread).
+A stored `thread_id` is also invalidated by the shared **Resume lineage rule**
+(`../adapters.md`): discard it after a rollback, a lint-FAIL-superseded turn, or any
+lineage mismatch with the board's committed chain.
 
 `via=codex-cli` is recorded in the `log.md` `TURN_COMMIT` line (stored legacy `via=codex`
 lines on existing boards remain valid — the log grammar treats the adapter token as free

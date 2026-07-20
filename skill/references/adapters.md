@@ -71,7 +71,8 @@ Dispatch (command + per-session/turn/attempt unique files + stdout/stderr redire
 spawn-PID capture) · Validity rule · Execution mode · Failure path (board-landed check,
 tree-rooted kill-confirm, limit classification, partial-turn recovery, one fresh retry) ·
 WRITE_BLOCKED detection · Usage-limit signatures
-(feeding the shared auto-resume below) · Resume (stored-id only, fresh default) ·
+(feeding the shared auto-resume below) · Resume (stored-id only, fresh default, invalidated
+per the shared lineage rule below) ·
 Model/effort keys (`SecondaryModel:`/`SecondaryEffort:`, absent = inherit). Adding a future
 assistant = adding one executor file + one `L18` mapping row; nothing else changes.
 
@@ -135,6 +136,27 @@ lint uses — before any retry:
   trailing newline / truncated event) is quarantined — moved verbatim into the PRIMARY's
   `agents/` `PRIVATE_NOTES` and removed from `log.md` — since a truncated append never
   reached its commit semantics.
+
+---
+
+## Resume lineage rule (shared — any CLI executor with a stored id)
+
+Fresh dispatch is the default posture; a stored resume id (codex `thread_id` / claude
+`session_id`) is a deliberate exception, and it is valid **only while the thread's committed
+lineage matches the board** — the thread's memory of what it wrote corresponds to turns
+actually committed on the chain. Discard the stored id and dispatch fresh after:
+
+- **(a)** any partial-turn **ROLLBACK** (above) — the thread remembers writes that were
+  garbage-collected;
+- **(b)** a landed turn from that thread superseded by a **lint-FAIL correction** — the
+  thread's committed content was rejected and replaced;
+- **(c)** any state where the thread's last committed turn **cannot be identified with the
+  board's committed chain**.
+
+A faithful scribe relay does **not** invalidate — the relay changes the writer, not the
+committed content, and the thread knows it produced the payload. At `PLAN->IMPL`, prefer a
+fresh dispatch as review-independence hygiene (SHOULD, not MUST — no lineage contradiction
+is involved). Failure-path retries are always fresh (the executors' existing rule).
 
 ---
 

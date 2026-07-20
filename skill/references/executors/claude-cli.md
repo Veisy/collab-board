@@ -136,5 +136,8 @@ claude -p --resume <stored-session-id> --safe-mode --output-format json ... < pr
 `--continue` (latest-conversation guessing) is forbidden — it is directory-scoped, not
 collab-session-scoped. No stored id → fresh. Fresh is the default posture; the board
 read-set is authoritative, never the executor's private memory.
+A stored `session_id` is also invalidated by the shared **Resume lineage rule**
+(`../adapters.md`): discard it after a rollback, a lint-FAIL-superseded turn, or any
+lineage mismatch with the board's committed chain.
 
 `via=claude-cli` is recorded in the `log.md` `TURN_COMMIT` line.
