@@ -5,7 +5,11 @@ different models adversarially review and challenge each other in strict alterna
 (a dialog). See [Why two models](#why-two-models) for the reasoning.
 
 The shared board is a set of interlinked small Markdown files, so each turn reads only the current
-state and the files it needs instead of an ever-growing transcript.
+state and the files it needs instead of an ever-growing transcript. Long sessions do not inherently
+degrade the output as the transcript grows; if anything, the accumulated review can improve it:
+every turn lands in its own interlinked file, only the findings worth keeping are distilled into
+the turns that follow, and each model reads only the history relevant to its turn, so per-turn
+context stays bounded while the review keeps compounding.
 
 Claude + Codex is the default pair, but the protocol doesn't care which two models you use. It
 works for any task that benefits from a skeptical second opinion, whether that is code, a design,
@@ -26,8 +30,12 @@ that into a safeguard, two ways:
   compounding and spiraling as the task grows.
 
 This *reduces* error; it doesn't eliminate it — two models can still share a blind spot. So
-collab-board anchors agreement on evidence, and in the build phase on an executable check where one
-exists, rather than on the two models simply agreeing.
+collab-board is designed to leave no shortcut around the proof bar: agreement has to rest on
+evidence, and in the build phase on an executable check where one exists, rather than on the two
+models simply agreeing.
+
+A second model can also save tokens: when one gets stuck, it can challenge the other and get a
+targeted answer instead of grinding alone through repeated attempts.
 
 ## Install
 
@@ -39,19 +47,29 @@ Install this skill user-wide: https://github.com/Veisy/collab-board/
 
 ## How to use
 
-Ask your AI assistant in plain language:
+There are three ways to use the board:
 
-```text
-Create this app together with Codex using collab-board.
-```
+1. The models work together on the research, planning, and implementation from the beginning.
+   This works best when prior research and a plan already exist for the models to start from.
 
-```text
-Design and implement this feature using collab-board.
-```
+   ```text
+   Create this app together with Codex using collab-board: …
+   ```
 
-```text
-Investigate this test with another model using collab-board.
-```
+2. The primary model completes the initial research and planning, then continues with the
+   board. This is the approach I generally use.
+
+   ```text
+   Make an initial research and plan for the following work, and then continue with
+   collab-board to discuss and review every critical point: …
+   ```
+
+3. The primary model completes the implementation, then uses the board for review. For
+   example, this suits a final review of relatively easy and low-risk tasks.
+
+   ```text
+   Review the last commit with collab-board: …
+   ```
 
 You can name Claude, Codex, another available model, or simply say "another model."
 
