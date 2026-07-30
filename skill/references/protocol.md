@@ -121,7 +121,11 @@ Valid hand-states: `START` · `WORKING` · `ON_HOLD` · `DONE`.
 - **Anchor IMPL agreement on external verification where one exists.** Mutual `AGREE` is not
   proof of correctness. When the project code has an executable verifier (tests, build,
   type-check, lint), an `IMPL_AGREE_*` turn should cite that result in its `Evidence`, not rest
-  on both agents agreeing.
+  on both agents agreeing. State it either way: an `IMPL_AGREE_*` turn's `Evidence` must cite an
+  **applicable** executable check — command AND outcome — or state that none applies. A
+  non-passing or unrun check is disclosure, not verification, and cannot alone support a gate.
+  Even a passing check verifies the implementation against its encoded expectations, not the
+  specification: a blind spot you share about WHAT to build survives a green suite.
 - **Resource exhaustion is not grounds to lower the bar — nor grounds to stop.** If the SECONDARY
   becomes unavailable mid-session (a rate/usage limit — its delegation fails in a limit-shaped
   way, or the user says a model is near its cap before a large job), it is *unavailable, not wrong
@@ -202,6 +206,12 @@ Rules for shards:
   `- Impl:` line entirely and authors no branch/commit (Rule 7) — cite the reviewed commit in
   `Evidence` if needed.
 - A SECONDARY's **first** turn must `ACK` the session contract in its `FINDINGS`.
+- **Independent-first (a SECONDARY's first turn).** Form and write down your own candidate
+  answer from `SESSION.md` Topic/Goal/Done — plus only task sources explicitly in scope —
+  *before* opening `points.md` or the predecessor shard; both carry the PRIMARY's candidates and
+  anchor you. Then open them, compare, and record one `- INDEPENDENT:` line in `FINDINGS`
+  (diverged how, or converged on what). **Diagnostic, not proof**: a recorded convergence flags
+  a possible shared blind spot, it never certifies either side.
 
 ---
 

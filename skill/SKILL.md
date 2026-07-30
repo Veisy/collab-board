@@ -104,8 +104,9 @@ Read **only** these. Never bulk-read `turns/` or `log.md`. (The `lint` command *
 full `log.md`, but it runs as a subprocess — its reads never enter your context window, so they
 don't count against this per-turn budget. Use `lint --quick` per turn to skip even that.)
 
-**PLAN turn:** `PROTOCOL.md` (once, cached) · `HEAD.md` · `points.md` · the one shard at
-`HEAD.RESPONDS_TO` (none if `NEW`) · `SESSION.md` (first turn only) · your `agents/<you>.md`.
+**PLAN turn:** `PROTOCOL.md` (once, cached) · `HEAD.md` · `SESSION.md` (first turn only —
+read it *before* the next two, `PROTOCOL.md` §5) · `points.md` · the one shard at
+`HEAD.RESPONDS_TO` (none if `NEW`) · your `agents/<you>.md`.
 
 **IMPL turn:** `PROTOCOL.md` (cached) · `HEAD.md` · `points.md` · `plan/context.md` (the
 frozen plan — read this *instead of* any `P*` shard) · `impl/code_state.md` · the one shard at

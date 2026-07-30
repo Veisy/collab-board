@@ -245,12 +245,17 @@ wall-clock time. Lint L23 rejects decreasing or far-future event time.
 READ EXACTLY THESE, NOTHING ELSE (do NOT read other turns/* or log.md):
   - .collab-board/PROTOCOL.md                         (skip if already in this thread)
   - .collab-board/sessions/<id>/HEAD.md               (confirm <SECONDARY>: START — else output NOT_MY_TURN and stop)
-  - .collab-board/sessions/<id>/points.md
-  - .collab-board/sessions/<id>/<RESPONDS_TO>         (the one shard you respond to; skip if NEW)
-  - .collab-board/sessions/<id>/agents/<secondary_lc>.md   (your private notes)
   [first secondary turn] - .collab-board/sessions/<id>/SESSION.md   (the contract — read it to ACK, see below)
+  - .collab-board/sessions/<id>/points.md             (deferred on your first turn — see below)
+  - .collab-board/sessions/<id>/<RESPONDS_TO>         (the one shard you respond to; skip if NEW — deferred on your first turn, same reason)
+  - .collab-board/sessions/<id>/agents/<secondary_lc>.md   (your private notes)
   [IMPL only] - .collab-board/sessions/<id>/plan/context.md
   [IMPL only] - .collab-board/sessions/<id>/impl/code_state.md
+
+[first secondary turn] INDEPENDENT-FIRST (PROTOCOL §5): form and write down your own candidate
+answer from SESSION.md Topic/Goal/Done — plus only task sources explicitly in scope — BEFORE
+opening points.md or <RESPONDS_TO>, then record the `- INDEPENDENT:` line. "NOTHING ELSE"
+excludes unlisted BOARD files, not those scoped task sources.
 
 Take ONE <PHASE> turn (id <NEXT_TURN_ID>) responding to <RESPONDS_TO> for points <ids>.
 You are SECONDARY: do NOT edit project source files (Rule 7). An IMPL turn is review-only —
