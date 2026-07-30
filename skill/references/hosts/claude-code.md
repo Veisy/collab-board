@@ -14,6 +14,16 @@ Native: this skill loads from `.claude/skills/collab-board/` (project) or
   directly. Foreground default timeout is 120 s — **always pass an explicit
   `timeout: 600000`** (the tool maximum) on a dispatch, since secondary turns typically
   run 3–6 minutes.
+- Read the clock — for the adapter skeleton's `DISPATCH_UTC` and for every timestamp you
+  write yourself — with this exact command, which is UTC on every platform:
+
+  ```bash
+  node -e "process.stdout.write(new Date().toISOString())"
+  ```
+
+  Do **not** use the shell's own date builtin — Windows `date` and PowerShell `Get-Date` return
+  **local** time, which `L23` has already caught being written as UTC. Node is a hard dependency
+  of this skill, so this adds none.
 - For a turn expected to exceed 10 minutes, run the same dispatch with Bash
   `run_in_background: true` — but **never wait on the completion notification alone**: a
   hung child or a lost notification would otherwise stall the loop with nothing scheduled

@@ -69,7 +69,17 @@ if ($child.ExitCode -ne 0) { throw "claude exited $($child.ExitCode)" }
 ```
 
 Immediately before creating `$promptPath`, compute the adapter skeleton's
-`DISPATCH_UTC` from host UTC and `HEAD.LAST_UPDATE`; do not let Claude estimate time.
+`DISPATCH_UTC` from host UTC and `HEAD.LAST_UPDATE`; do not let Claude estimate time. Read the
+clock with this exact command, which is UTC on every platform and parses identically in PowerShell,
+`cmd`, `bash` and `zsh` (it contains no `$`, backtick or glob):
+
+```
+node -e "process.stdout.write(new Date().toISOString())"
+```
+
+Do **not** use the shell's own date builtin — Windows `date` and PowerShell `Get-Date` return
+**local** time, which `L23` has already caught being written as UTC. Node is a hard dependency of
+this skill, so this adds none.
 
 ## Waiting out a usage limit (the host wait mechanism)
 

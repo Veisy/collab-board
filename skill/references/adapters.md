@@ -277,17 +277,20 @@ WRITE, IN THIS ORDER (HEAD.md written before the log HANDOFF line, which is the 
      "NEXT: [<NEXT_TURN_ID>](<NEXT_TURN_ID>-<secondary_lc>.md)" — after step 1, so a crash leaves an
      orphan shard (lint L14) not a dangling NEXT to a missing file. Touch nothing else there.
   3. UPDATE points.md for any point you resolve (Resolved In = link to your shard).
-  4. APPEND log.md (first ensure the file ends in a newline — else your line merges onto the last
-     one and is silently dropped from every replay; lint L22):
+  4. APPEND log.md — append to the END of the file, never a positional write, a rewrite, or a
+     truncate; a positional write at offset 0 silently destroys the header and loses the event.
+     First ensure the file ends in a newline (else your line merges onto the last one and is
+     silently dropped from every replay; lint L22). Then append:
      "<DISPATCH_UTC + next ms> TURN_COMMIT <NEXT_TURN_ID> actor=<SECONDARY> responds_to=<resp-id> points=<ids> via=<adapter>"
      (+ a POINT_SET line if you changed any point).
+     Afterwards verify the file's FIRST line is still the "# Event Log" heading.
   5. UPDATE agents/<secondary_lc>.md: SELF_HAND=ON_HOLD, LAST_TURN_WRITTEN=<NEXT_TURN_ID>,
      and your private notes.
   6. UPDATE HEAD.md (write atomically): ## State <SECONDARY> WORKING->ON_HOLD and
      <PRIMARY> ON_HOLD->START; set your gate(s) in ## Gates if you agreed; ## Cursor
      TURN_CURSOR=<NEXT_TURN_ID>, RESPONDS_TO=turns/<NEXT_TURN_ID>-<secondary_lc>.md,
      NEXT_TURN_ID=<next>, NEXT_ACTOR=<PRIMARY>, SEQ+1; LAST_UPDATE=the next ordered timestamp.
-  7. APPEND log.md (same newline caution as step 4):
+  7. APPEND log.md (same end-of-file, newline and first-line cautions as step 4):
      "<DISPATCH_UTC + next ms> HANDOFF <SECONDARY>:WORKING->ON_HOLD <PRIMARY>:ON_HOLD->START next=<next>/<PRIMARY> seq=<SEQ>".
 
 Output a 3-line summary; the files are the real deliverable.

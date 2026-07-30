@@ -508,6 +508,42 @@ console.log("collab-board self-test\n");
   const pS = planLine.indexOf("`SESSION.md`"), pP = planLine.indexOf("`points.md`"), pR = planLine.indexOf("`HEAD.RESPONDS_TO`");
   ok("SKILL.md PLAN enumeration lists first-turn SESSION.md before points.md and the shard",
     pS >= 0 && pP > pS && pR > pS);
+
+  // --- Append-only log discipline in the dispatch skeleton.
+  // These assert the DOCUMENTATION CONTRACT — that the skeleton still TELLS a secondary how to
+  // write log.md. They cannot and do not prove a model obeys it; the motivating incident was a
+  // secondary appending with a positional write at offset 0, which destroyed the log header and
+  // lost its own TURN_COMMIT. Scoped to the WRITE block so a stray mention elsewhere in
+  // adapters.md cannot satisfy them.
+  const wFrom = skeleton.indexOf("WRITE, IN THIS ORDER");
+  const wTo = skeleton.indexOf("Output a 3-line summary", wFrom < 0 ? 0 : wFrom);
+  // flat() collapses the wrapping, so a reflowed paragraph cannot false-fail these.
+  const writeBlock = wFrom >= 0 && wTo > wFrom ? flat(skeleton.slice(wFrom, wTo)) : "";
+  ok("skeleton write block is delimited (fixture sanity)", writeBlock !== "");
+  ok("skeleton requires appending to the END of log.md",
+    /append to the END of the file/i.test(writeBlock));
+  ok("skeleton forbids positional write, rewrite and truncate on log.md",
+    /never a positional write, a rewrite, or a truncate/i.test(writeBlock));
+  ok("skeleton requires verifying log.md's first line survived the append",
+    /verify the file's FIRST line is still/i.test(writeBlock));
+  // The pre-existing L22 newline caution must survive alongside the new rule, not be replaced by it.
+  ok("the append-discipline change stayed additive — the L22 newline caution survives",
+    /ends in a newline/.test(writeBlock) && /lint L22/.test(writeBlock));
+
+  // --- A pinned, platform-independent UTC clock command in BOTH host references.
+  // Motivation: L23 has already caught local time written as UTC, because Windows `date` and
+  // PowerShell `Get-Date` are local. Asserting BOTH files carry the IDENTICAL recipe is the point
+  // — a recipe that drifts in one host file is the same bug returning.
+  const UTC_RECIPE = 'node -e "process.stdout.write(new Date().toISOString())"';
+  for (const host of ["claude-code.md", "codex-cli.md"]) {
+    const h = read(path.join(REF, "hosts", host));
+    ok(`hosts/${host} pins the cross-platform UTC clock command`, h.includes(UTC_RECIPE));
+    // Match the warning as ONE flattened sentence. A file-wide `/Get-Date/ && /local/i` pair looked
+    // equivalent but was partially vacuous: "local" also occurs in unrelated prose ("process-local",
+    // "the local Codex CLI"), so deleting the word from the warning itself still passed.
+    ok(`hosts/${host} warns that the shell date builtin returns LOCAL time, not UTC`,
+      /Windows `date` and PowerShell `Get-Date` return\s+\*\*local\*\* time/.test(flat(h)));
+  }
 }
 
 console.log(`\n${failed ? "FAIL" : "PASS"}: ${passed} passed, ${failed} failed`);
