@@ -378,5 +378,137 @@ console.log("collab-board self-test\n");
     t4.code === 0 && hasTerm && lint(root, id).code === 0);
 }
 
+// 22. DOCUMENTATION invariants for the two anti-correlation rules — independent-first (PROTOCOL
+//     §5, pointed at from the dispatch skeleton) and the IMPL-evidence rule (PROTOCOL §4). These
+//     guard the written rules against a silent reversion; they do NOT measure model
+//     independence, and passing them is no evidence that any turn was actually independent.
+//     Unlike every case above they assert on the skill's own reference files rather than a
+//     scaffolded board, because prose is where these rules live and where a revert would happen.
+//     Assertions are relational (line order) plus short stable tokens, never paragraph equality,
+//     so a rewording that preserves the behavior survives; a label-level refactor of the
+//     read-list entries is fixture maintenance and needs the anchors updated with it.
+{
+  const REF = path.join(HERE, "..", "references");
+  const proto = read(path.join(REF, "protocol.md"));
+  // Scope every prose assertion to the ONE markdown bullet that must carry it. A fixed-width
+  // window would both overread into the next section (letting an unrelated mention satisfy a
+  // missing anchor) and underread a legitimately reflowed bullet. `bullet()` slices from a
+  // top-level "- " to the next top-level bullet, ATX heading, or thematic break — the document's
+  // own structure, so it tracks any reflow. Two refinements matter: the break must be a whole
+  // line (a paragraph merely starting "---not-a-divider" would otherwise truncate the slice
+  // early and false-fail), and HTML comments and fenced blocks are stripped before matching, so
+  // an anchor parked in either cannot stand in for a rule deleted from the rendered prose.
+  // Every prose predicate below runs against `flat()` output — whitespace collapsed to single
+  // spaces — so re-wrapping a rule across different line breaks can never fail an assertion.
+  // Line-structural facts (read-list order, bullet boundaries) are computed BEFORE flattening.
+  const flat = (s) => s.replace(/\s+/g, " ").trim();
+  const span = (text, start) => {                       // raw slice — keeps offsets usable
+    if (start < 0) return "";
+    const rest = text.slice(start + 1);
+    const end = rest.search(/\n(?=- |#{1,6} |---[ \t]*(?:\n|$))/);
+    return end < 0 ? text.slice(start) : text.slice(start, start + 1 + end);
+  };
+  const bullet = (text, start) =>                       // rendered prose only, whitespace-flat
+    flat(span(text, start).replace(/<!--[\s\S]*?-->/g, "").replace(/^ {0,3}```[\s\S]*?^ {0,3}```/gm, ""));
+
+  // --- PROTOCOL §5: independent-first is canonical and adapter-blind (so it binds peer mode,
+  //     which never sees a scoped prompt). Placement matters: it belongs with the other
+  //     first-turn shard rule, so assert it is the bullet IMMEDIATELY after ACK — "somewhere
+  //     below" would let an unrelated bullet be wedged between them.
+  const iAck = proto.indexOf("- A SECONDARY's **first** turn must `ACK` the session contract");
+  const iRule = proto.indexOf("- **Independent-first (a SECONDARY's first turn).**");
+  ok("PROTOCOL §5 carries the independent-first rule, immediately after the first-turn ACK rule",
+    iAck >= 0 && iRule >= 0 && iAck + span(proto, iAck).length + 1 === iRule);
+  const rule = bullet(proto, iRule);
+  // Pre-registration is the whole mechanism: "form" alone would let the INDEPENDENT line be
+  // retrofitted after reading the PRIMARY, which is exactly what it exists to detect.
+  ok("independent-first requires writing the candidate down BEFORE exposure",
+    /write down/.test(rule) && /\*before\* opening/.test(rule));
+  ok("independent-first defers BOTH primary-authored artifacts",
+    /points\.md/.test(rule) && /predecessor shard/.test(rule));
+  // The source allowance must stay bounded — an open-ended licence would gut the bounded
+  // read-set that is this protocol's central design goal (§1).
+  ok("independent-first bounds its source allowance to explicitly-scoped task sources",
+    /only task sources explicitly in scope/.test(rule));
+  ok("independent-first claims diagnosis, not proof",
+    /Diagnostic, not proof/.test(rule) && /never certifies either side/.test(rule));
+
+  // --- The dispatch skeleton: operational order + a POINTER, never a second normative copy.
+  const skeleton = read(path.join(REF, "adapters.md"));
+  // Scope EVERY skeleton assertion to the READ block: the WRITE section names points.md too, and
+  // an unscoped search would also let the pointer drift anywhere in the file while still
+  // matching. Bounding here (rather than file-wide) also keeps a legitimate explanatory mention
+  // elsewhere in adapters.md from false-failing the duplicate-copy check below.
+  const from = skeleton.indexOf("READ EXACTLY THESE");
+  const to = skeleton.indexOf("Take ONE <PHASE> turn");
+  const readBlock = from >= 0 && to > from ? skeleton.slice(from, to) : "";
+  const rbLines = readBlock.split("\n");
+  const at = (re) => rbLines.findIndex((l) => re.test(l));
+  const iSession = at(/\[first secondary turn\].*\/SESSION\.md/);
+  const iPoints = at(/^\s*-\s.*\/points\.md/);
+  const iResponds = at(/^\s*-\s.*<RESPONDS_TO>/);
+  const iIndep = at(/INDEPENDENT-FIRST/);
+  ok("skeleton read block is delimited (fixture sanity)",
+    readBlock !== "" && iSession >= 0 && iPoints >= 0 && iResponds >= 0 && iIndep >= 0);
+  ok("first-turn SESSION.md is read before points.md AND <RESPONDS_TO> (anti-anchoring order)",
+    iSession >= 0 && iSession < iPoints && iSession < iResponds);
+  // The two deferral annotations are load-bearing: without them a top-down reader opens both
+  // primary-authored artifacts before ever reaching the pointer below the list.
+  ok("both primary-authored read-list entries are marked deferred on the first turn",
+    iPoints >= 0 && iResponds >= 0
+    && /deferred on your first turn/.test(rbLines[iPoints]) && /deferred on your first turn/.test(rbLines[iResponds]));
+  ok("INDEPENDENT-FIRST pointer sits after the read list and inside the read block",
+    iIndep >= 0 && iIndep > iPoints && iIndep > iResponds);
+  const pointer = flat(rbLines.slice(iIndep).join(" "));
+  ok("skeleton pointer names PROTOCOL §5 and both deferred artifacts",
+    /INDEPENDENT-FIRST \(PROTOCOL §5\)/.test(pointer)
+    && /BEFORE opening points\.md or <RESPONDS_TO>/.test(pointer));
+  // Without this, "NOTHING ELSE" above reads as forbidding the very sources the rule requires.
+  ok("skeleton clarifies that NOTHING ELSE bounds board reads, not scoped task sources",
+    /"NOTHING ELSE" excludes unlisted BOARD files/.test(pointer));
+  // Single-source: the rule text lives in PROTOCOL only, and what remains here is a POINTER.
+  // Three independent ways of saying that, because a duplicate can be restored without reusing
+  // the label and without matching any one phrase's capitalization: (a) one label occurrence,
+  // (b) the trailing paragraph stays pointer-sized — measured in whitespace-normalized
+  // CHARACTERS, not lines, so re-wrapping the same words is free while a restored rule body
+  // (~570 chars in its PROTOCOL form) is not, (c) none of the rule's own normative phrasings
+  // appear here, matched case-insensitively.
+  const flatBlock = flat(readBlock);
+  ok("the rule is single-sourced — the read block holds a short pointer, not a second copy",
+    (readBlock.match(/INDEPENDENT-FIRST/g) || []).length === 1
+    && pointer.length <= 400
+    && !/diagnostic, not proof/i.test(flatBlock)
+    && !/never certifies either side/i.test(flatBlock)
+    && !/share a blind spot/i.test(flatBlock));
+
+  // --- PROTOCOL §4: the IMPL-evidence rule must be satisfiable ONLY by an applicable check, and
+  //     must classify a non-passing or unrun one as disclosure rather than verification. Scoped
+  //     to its own bullet: searching the whole file would let a stray mention — even one inside
+  //     an HTML comment — stand in for a rule that had been removed from the rendered text.
+  const iAnchor = proto.indexOf("- **Anchor IMPL agreement on external verification");
+  const sec4 = bullet(proto, iAnchor);
+  ok("the IMPL-evidence bullet is locatable (fixture sanity)", iAnchor >= 0 && sec4.length > 0);
+  ok("IMPL-evidence rule demands an APPLICABLE check with command and outcome",
+    /cite an \*\*applicable\*\* executable check — command AND outcome/.test(sec4)
+    && /state that none applies/.test(sec4));
+  ok("IMPL-evidence rule classifies a non-passing or unrun check as disclosure, not verification",
+    /non-passing or unrun check is disclosure, not verification/.test(sec4)
+    && /cannot alone support a gate/.test(sec4));
+  ok("IMPL-evidence rule scopes itself to implementation, not specification",
+    /not the specification/.test(sec4));
+  // The additive bar: the pre-existing should-level sentence must still be there. If a future
+  // edit REPLACES it with the branch rule instead of appending, this is what catches it.
+  ok("the IMPL-evidence change stayed additive — the original should-level sentence survives",
+    /should cite that result in its `Evidence`/.test(sec4));
+
+  // --- SKILL.md's per-turn read enumeration must agree with the rule above, or the operating
+  //     card tells an agent the opposite order from the protocol.
+  const skill = read(path.join(HERE, "..", "SKILL.md"));
+  const planLine = skill.slice(skill.indexOf("**PLAN turn:**"), skill.indexOf("**IMPL turn:**"));
+  const pS = planLine.indexOf("`SESSION.md`"), pP = planLine.indexOf("`points.md`"), pR = planLine.indexOf("`HEAD.RESPONDS_TO`");
+  ok("SKILL.md PLAN enumeration lists first-turn SESSION.md before points.md and the shard",
+    pS >= 0 && pP > pS && pR > pS);
+}
+
 console.log(`\n${failed ? "FAIL" : "PASS"}: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
