@@ -1,175 +1,99 @@
 # COLLAB-BOARD PROTOCOL
 
-Strict, turn-based collaboration protocol between a **PRIMARY** and a **SECONDARY** AI
-(default: `PRIMARY=CLAUDE`, `SECONDARY=CODEX`). This is the single document every
-participant reads **once per session, then caches**. Everything an agent needs to take a
-turn lives in a handful of tiny per-session files (below) — never read the whole history.
+Strict PRIMARY/SECONDARY collaboration in alternating PLAN→IMPL turns. Read once per
+persistent thread; a fresh SECONDARY reads it every turn. New/reset sessions pin an immutable copy
+at `sessions/<id>/PROTOCOL.md` and are governed by it; legacy sessions may declare the shared root
+copy. Resolve `HEAD.PROTOCOL` relative to the session directory.
 
-This file is the schema root. It is copied verbatim to `.collab-board/PROTOCOL.md` when a
-session tree is scaffolded. Do not edit it inside a project; edit the skill's
-`references/protocol.md` instead.
+Contents: §0 principles · §1 bounded board · §2 files · §3 hand-state · §4 phases/gates ·
+§5 turns · §6 points · §7 rules 1–11 · §8 event log · §9 schemas · §10 lint.
 
-Contents: §0 principles · §1 why the board is split · §2 session file tree · §3 hand-state
-machine · §4 phases & gates · §5 turn format · §6 point tracker · §7 rules 1–10 · §8 event
-log grammar · §9 file schemas · §10 lint invariants.
+## 0. Collaboration principles
 
----
+**The board is instrumentation for agents.** It carries the state and evidence the next turn acts
+on; being tidy, ordered or well-written is not one of its properties. A shard is read whole by the
+next turn and by a fresh SECONDARY with no memory of writing it, so its length is a tax every later
+turn pays.
 
-## 0. Collaboration principles (the spirit behind the rules)
+Challenge claims with evidence, ask for whatever you need to judge them, and concede when evidence
+holds, never merely to agree. **Mutual agreement is not verification.** Prefer the simplest complete
+solution. Never translate machine tokens.
 
-These guide every turn; the mechanics in §1–§10 exist to serve them, not the other way
-around.
+**A turn exists to change the answer.** Progress is settlement — a resolved point, a gate, a
+decision — never turns taken. Open a point only for what changes an outcome; refuse a gate only for
+a defect that breaks a stated Done condition; let anything smaller ride on the next turn you were
+already taking. A correction earns no turn of its own.
 
-- **Adversarial but open.** Each agent reviews the other skeptically — treat a claim as
-  unproven until its evidence holds — yet stays genuinely open to a better idea and concedes
-  plainly when the other is right. The goal is the best answer, not winning the turn. *Find
-  faults before you agree; hold your position unless given a substantive technical reason;
-  never concede merely to agree.* Mutual agreement is **not** verification — two models can
-  share a blind spot and converge on the same wrong answer — so back a resolution with evidence
-  (and, in IMPL, an executable check where one exists), not with assent.
-- **Occam's razor.** Prefer the simplest solution that fully solves the problem: as simple
-  as possible, as complex as necessary. When two solutions are of similar quality, the
-  simpler one wins — the burden of proof is on the added complexity.
-- **Challenge and ask.** Raise disagreements as `CHALLENGE`s backed by evidence, and ask the
-  other agent the questions you actually need answered to understand the problem before you
-  propose.
-- **Escalate when jointly unsure.** If, after exchanging evidence, *both* agents are still
-  unsure, escalate to the user (Rule 9, `USER_QUESTION:`) instead of guessing. Persistent,
-  *evidence-backed* disagreement that neither side can resolve is itself grounds to escalate —
-  don't let a confident assertion settle it, since self-reported certainty tracks neither
-  correctness nor independence (it tends to *rise* under disagreement). This stays a judgment
-  call, never automatic: at a hard per-point deadlock the PRIMARY still decides (Rule 6).
-- **Stay lean — this is a board, not a history book.** Record only what a future turn or the
-  audit genuinely needs. Turn bodies carry signal, not transcripts; the log carries events,
-  not prose; points capture decisions, not chatter. Brevity is what keeps every agent's
-  read-set small.
+**Only state is authoritative** — HEAD, the log, point rows and gates. Shard prose and agent notes
+serve the next reader: repair them in passing, never by spending a turn on them. The session's own
+progress is recorded in the log, which cannot go stale; prose that restates it will.
 
----
+## 1. Bounded board
 
-## 1. Why the board is split
+Per-turn context stays independent of session length: read HEAD, points, the one shard named by
+`HEAD.RESPONDS_TO`, your agent file, and phase-specific cold files — never the turn directory or the
+log. A file another hand may have changed is HOT and is read every turn; a frozen or self-authored
+one is COLD and a persistent thread reads it once, again only once its context has been renewed. A
+fresh dispatch is never persistent and reads the whole set. Lint replays full history in a
+subprocess, outside model context.
 
-The old monolithic board put the session contract, both agents' hand-state, every turn, the
-point tracker, and the phase gates into one growing file. Every turn forced every agent to
-re-read all of it → context pollution that scales with session length.
+## 2. Session files
 
-This protocol splits each session into small, single-purpose, interlinked Markdown files so
-the **per-turn read-set is bounded and independent of how long the session has run.** The
-board is many small cross-linked files: a catalog (`index.md`), an append-only ledger
-(`log.md`), and a schema doc (this file) read once.
-
----
-
-## 2. Session file tree
-
-```
+```text
 .collab-board/
-├── PROTOCOL.md          # this file (read once per agent per session, then cached)
-├── index.md             # cross-session catalog (read only when choosing a session)
-└── sessions/<id>/       # <id> = <YYYY-MM-DD>-<slug>
-    ├── HEAD.md          # HOT  — the live state singleton (see schema below)
-    ├── SESSION.md       # COLD — frozen contract, write-once at open
-    ├── points.md        # HOT  — the point tracker table
-    ├── log.md           # APPEND-ONLY — event ledger / derivation of HEAD
-    ├── plan/context.md  # frozen plan digest, written once at the PLAN→IMPL gate
-    ├── impl/code_state.md   # BRANCH / BASE_COMMIT / LATEST_COMMIT singleton
-    ├── agents/<actor>.md    # each actor's private scratch + non-authoritative hand mirror
-    └── turns/<ID>-<actor>.md  # immutable turn shards, one per turn
+├── index.md                    # catalog
+└── sessions/<id>/
+    ├── PROTOCOL.md             # immutable current snapshot for new/reset sessions
+    ├── HEAD.md                 # authoritative live state and protocol path
+    ├── SESSION.md              # frozen contract
+    ├── points.md               # point rendering
+    ├── points-archive.md       # rows `archive` moved out once settled; outside the turn read-set
+    ├── log.md                  # append-only state derivation
+    ├── plan/context.md         # frozen gate plan
+    ├── impl/code_state.md      # branch/base/latest
+    ├── agents/<actor>.md       # private mirror/recovery state
+    ├── captures/<ID>-<who>.relay # sole-writer audit payloads
+    └── turns/<ID>-<actor>.md   # immutable turn shards
 ```
 
-**HOT** files are read and/or written most turns. **COLD** files are read rarely (open,
-phase change, terminal). The only file an agent reads to learn *what happened last* is the
-**one** turn shard named by `HEAD.RESPONDS_TO` — never the whole `turns/` directory.
-
----
+A root `PROTOCOL.md` may exist for legacy sessions; new scaffolds neither create nor overwrite it.
 
 ## 3. Hand-state machine
 
-Valid hand-states: `START` · `WORKING` · `ON_HOLD` · `DONE`.
+Hands: `START`, `WORKING`, `ON_HOLD`, `DONE`. HEAD `## State` is authoritative; agent/v2 SELF_HAND
+mirrors it. Act only at START, the mutex: enter START→WORKING, finish WORKING→ON_HOLD and other
+ON_HOLD→START, exactly one active hand. A dispatched actor without START writes nothing and returns
+`NOT_MY_TURN`.
 
-- The authoritative hand-state for both actors lives **only** in `HEAD.md` under `## State`.
-  (Rule 1 — single State section.) `agents/<actor>.md` keeps a *mirror* for the actor's own
-  convenience; it is explicitly non-authoritative.
-- A receiver acts **only** when `HEAD` shows its own hand at `START`.
-- On entering a turn: self `START→WORKING`. On finishing: self `WORKING→ON_HOLD`,
-  other `ON_HOLD→START`. Exactly one actor is at `START`/`WORKING` while the session is
-  `ACTIVE`. **No parallel turns.** The `START` token is the mutex.
-- **Bootstrap (the first turn only).** A freshly scaffolded session is `IDLE` with *both*
-  hands `ON_HOLD` and `NEXT_ACTOR` = the PRIMARY. To open `TURN-P1` the PRIMARY self-activates:
-  set `SESSION_STATUS: ACTIVE`, run `collab-board.mjs activate --session <id>` (reconciles the
-  catalog row to ACTIVE so it doesn't read IDLE through the whole PLAN phase), append
-  `<ts> STATE_SET <PRIMARY>=WORKING <SECONDARY>=ON_HOLD cursor=- next=P1/<PRIMARY> seq=0` to
-  `log.md`, take the turn, then hand off normally. This is the one turn that enters from
-  `ON_HOLD` rather than `START`.
-- `HEAD.md` is always written **last** in a turn, and the `HANDOFF` line appended to
-  `log.md` is the **commit point**. A turn that crashes before that is detectable as an
-  orphan (lint L14) rather than silently corrupting state.
+Fresh boards are IDLE with both ON_HOLD. PRIMARY bootstraps P1: set ACTIVE, run `activate`, append
+`STATE_SET <PRIMARY>=WORKING <SECONDARY>=ON_HOLD cursor=- next=P1/<PRIMARY> seq=0`, then take P1.
 
----
+Write HEAD after content but before the final log event. `HANDOFF` commits a non-terminal turn;
+`TERMINAL` commits a final PRIMARY turn.
 
-## 4. Two phases and their gates
+## 4. Phases and gates
 
-`PLAN → IMPL`. Tracked by `HEAD.PHASE`.
+PLAN→IMPL. Each actor sets only its own PLAN/IMPL gate and logs GATE_SET. A gate turn states its
+challenge, or what it checked and why no defensible objection remains. §8 admits no `=NO` form and
+the log is append-only, so a gate cannot be withdrawn: gate only once nothing you attest can still
+change, which puts the actor that may still have to amend the artifact — normally PRIMARY — last.
 
-- During `PLAN`, agents converge a plan. Each agent records its own agreement in
-  `HEAD ## Gates`: `PLAN_AGREE_PRIMARY` / `PLAN_AGREE_SECONDARY` (`NO`→`YES`), logged with a
-  `GATE_SET` line.
-- **Agreeing is an attestation, not a reflex.** Before an agent sets *its own* gate to `YES`
-  (`PLAN_AGREE_*` or `IMPL_AGREE_*`), its turn must state EITHER the substantive challenge(s) it
-  raised this session OR, explicitly, what it checked and why no defensible objection remains. A
-  gate flipped with no recorded scrutiny is the rubber-stamp failure this protocol exists to
-  prevent. (A turn-body norm, not a lint check.)
-- **Anchor IMPL agreement on external verification where one exists.** Mutual `AGREE` is not
-  proof of correctness. When the project code has an executable verifier (tests, build,
-  type-check, lint), an `IMPL_AGREE_*` turn should cite that result in its `Evidence`, not rest
-  on both agents agreeing. State it either way: an `IMPL_AGREE_*` turn's `Evidence` must cite an
-  **applicable** executable check — command AND outcome — or state that none applies. A
-  non-passing or unrun check is disclosure, not verification, and cannot alone support a gate.
-  Even a passing check verifies the implementation against its encoded expectations, not the
-  specification: a blind spot you share about WHAT to build survives a green suite.
-- **Resource exhaustion is not grounds to lower the bar — nor grounds to stop.** If the SECONDARY
-  becomes unavailable mid-session (a rate/usage limit — its delegation fails in a limit-shaped
-  way, or the user says a model is near its cap before a large job), it is *unavailable, not wrong
-  to consult*. Do **not** cope by degrading: never let the PRIMARY's own self-review stand in for
-  the adversarial gate, never lower a model's effort/quality, and never author ahead of an ungated
-  backlog. A usage limit is a **scheduling problem**: the board is crash-safe after every
-  `HANDOFF`, so the moment between two confirmed turns is a **saveable point** — pause there,
-  record the wait in your own `agents/<primary>.md` `PRIVATE_NOTES` (limit signature, expected
-  reset, attempt count — non-authoritative, so the board stays untouched), and **announce, don't
-  ask**: tell the user which model is limited, the last safe cursor, and when you will resume —
-  then continue without user input. For the wait itself the PRIMARY **must** follow the canonical
-  wake/retry/backoff procedure in the skill's `references/adapters.md` "Usage-limit auto-resume"
-  (reset-time extraction, backoff ladder, hard-block escalation, dispatch-as-probe) together with
-  its host file's wait mechanism (`references/hosts/`) — never improvise a schedule.
-  A limit wait is **not** a stall: Rule 5 timers measure a *silent* actor, while a waiting PRIMARY
-  knows exactly why the board is idle — never force `STALL_HANDOFF` over a known limit (seizing
-  the secondary's turn is the degradation banned above). Lint's L9 staleness WARN on resume is
-  expected then; the recorded wait note answers it. If the **PRIMARY's own** model is limited, the
-  host stops the orchestrator itself and nothing skill-side can run — the board is already safe at
-  the last `HANDOFF`; re-enter later via the host's resume flow. collab-board cannot read a
-  model's usage percentage; it reacts to observable signals, not a metric it lacks.
-- The phase advances to `IMPL` **only** when: every `P*` point is non-`OPEN`
-  (`PLAN_OPEN_POINTS: 0`), **and** both `PLAN_AGREE_* = YES`, **and** `plan/context.md`
-  holds a real digest (not the `STATUS: EMPTY` placeholder). The transition is the **PRIMARY's**
-  job: once both gates are `YES`, the PRIMARY does **not** delegate another turn — on its own
-  turn it writes `context.md` and runs `advance` (which requires the PRIMARY to hold `START`,
-  logs `PHASE_SET PLAN->IMPL`, sets `HEAD.PHASE: IMPL`, and hands `START` to the PRIMARY for
-  `TURN-I1`, since only the PRIMARY implements — Rule 7). The bundled `advance` command enforces
-  these preconditions.
-- **The `advance` crossing is a shard-less engine transition.** It writes no `turn/v1` shard and so
-  has no `Handoff` line (§5's `Handoff` requirement applies to turn shards only); the PRIMARY keeps
-  `START` across it rather than handing off. The deciding `PLAN_AGREE` is normally the SECONDARY's; if
-  the PRIMARY casts it, that attestation (above) belongs on the PRIMARY's own preceding agreement turn
-  — it is **not** folded into `advance`.
-- `IMPL` ends when both `IMPL_AGREE_* = YES` and the session is set `COMPLETED`.
+- Applicable executable verification requires command and outcome; an unrun/failing check is
+  disclosure, not support. `verified=self|reported` (§8) records who ran it.
 
----
+Advance only with zero OPEN P points, both PLAN gates YES, and non-empty `plan/context.md`. PRIMARY
+writes the complete file-scope digest and runs `advance`; this shard-less transition keeps START
+with PRIMARY for I1. If PRIMARY casts the deciding PLAN gate, its attestation belongs on the
+preceding agreement turn, never folded into `advance`. IMPL ends only with both IMPL gates YES and
+terminal COMPLETED.
+
+A known SECONDARY usage limit is not a stall and never lowers the bar: pause at a confirmed HANDOFF,
+persist recovery state, announce the resume, and follow `recovery.md` plus the host wait mechanism.
+A PRIMARY limit leaves the board safe for later resume.
 
 ## 5. Turn format (`collab-board/turn/v1`)
 
-Each turn is one immutable file `turns/<ID>-<actor>.md` where `<ID>` is `P{n}` (plan) or
-`I{n}` (impl) and `<actor>` is the lowercase actor name.
-
-```
+```text
 ### TURN-<ID> (<ACTOR>)
 SCHEMA: collab-board/turn/v1
 - Header: PART=<PLAN|IMPL> · RESPONDS_TO=<turn-id|NEW> · POINTS=<ids|N/A>
@@ -177,174 +101,149 @@ SCHEMA: collab-board/turn/v1
   - FINDINGS: <bullets or N/A>
   - CHALLENGE: <bullets or N/A>
   - PROPOSAL: <bullets or N/A>
-- Evidence: <≥1 of file:line, test output, doc ref, or step-by-step reasoning — or N/A>
+- Evidence: <file:line, command outcome, doc, reasoning, or N/A>
 - Handoff: <ACTOR> WORKING->ON_HOLD, <OTHER> ON_HOLD->START
 PREV: [<prev-id>](<prev-id>-<actor>.md) | NEW
 NEXT: pending
 ```
 
-Rules for shards:
-- **Immutable once written**, with exactly **one** allowed later edit: the next author flips
-  this shard's `NEXT: pending` to `NEXT: [<next-id>](<next-id>-<actor>.md)` to keep the
-  chain doubly-linked. The next author creates its own shard *before* flipping this pointer, so a
-  crash never leaves a `NEXT` link to a missing file; lint L14 checks both `PREV` and `NEXT`
-  targets resolve.
-- **Disputed claims need evidence** (≥1 of: `file:line`, test output, doc ref, or explicit
-  step-by-step reasoning). A turn that **resolves** a point (sets it to a non-`OPEN` status)
-  should carry resolvable evidence for that resolution; `Evidence: N/A` on a resolving turn
-  draws lint **L19** (a WARN, not a block). Whether a claim is "disputed" is a judgment for the
-  author, not the linter.
-- **Preserve dissent.** When a turn resolves a point by overriding or conceding a recorded
-  objection, add a one-line `- DISSENT: <the minority view + why it was overruled>` to the Body
-  (optional — omit when there was no objection). Recording the losing position guards against
-  silent/sycophantic consensus collapse. Keep it to one line; it lives in the resolving turn,
-  never in `points.md` or the log.
-- A **PRIMARY** IMPL turn adds a line `- Impl: BRANCH=<b> BASE_COMMIT=<c> LATEST_COMMIT=<c>`
-  echoing `impl/code_state.md` — **top-level, at column 0**, a sibling of `- Body:` /
-  `- Evidence:`, never a bullet nested inside `Body` (lint L13 matches it at line start
-  only). A **SECONDARY** IMPL turn is **review-only**: it omits the
-  `- Impl:` line entirely and authors no branch/commit (Rule 7) — cite the reviewed commit in
-  `Evidence` if needed.
-- A SECONDARY's **first** turn must `ACK` the session contract in its `FINDINGS`.
-- **Independent-first (a SECONDARY's first turn).** Form and write down your own candidate
-  answer from `SESSION.md` Topic/Goal/Done — plus only task sources explicitly in scope —
-  *before* opening `points.md` or the predecessor shard; both carry the PRIMARY's candidates and
-  anchor you. Then open them, compare, and record one `- INDEPENDENT:` line in `FINDINGS`
-  (diverged how, or converged on what). **Diagnostic, not proof**: a recorded convergence flags
-  a possible shared blind spot, it never certifies either side.
+Create a shard before changing its predecessor's NEXT; thereafter only that NEXT token may change.
+Resolving turns cite evidence (L19 warns on N/A) and may preserve an overruled view in one DISSENT
+line. PRIMARY IMPL adds top-level `- Impl: BRANCH=<b> BASE_COMMIT=<c> LATEST_COMMIT=<c>`; SECONDARY
+IMPL is review-only and omits it.
 
----
+SECONDARY first turn ACKs SESSION and works independent-first: form a candidate from Topic/Goal/Done
+plus scoped task sources before points/predecessor, then record `- INDEPENDENT:`. **Diagnostic, not
+proof**: convergence can still reflect a shared blind spot.
 
-## 6. Point tracker (`points.md`, `collab-board/points/v1`)
+A SECONDARY requests a step-back with `- REFRAME_REQUEST:`. A PRIMARY step-back shard uses
+`- REFRAME: <outcome> — <one-line result of the barren window>`, compares at least two approaches,
+and logs REFRAME. PRIMARY may instead answer the request with one line explaining why the loop is
+converging. The response independently challenges what would converge.
 
-```
+## 6. Point tracker (`collab-board/points/v1`)
+
+```text
 | ID | Part | Title | Status | Resolved In |
 |----|------|-------|--------|-------------|
 ```
 
-- `ID` prefixes: `P*` (plan), `I*` (impl). `Part`: `PLAN` | `IMPL`.
-- `Status`: `OPEN` · `AGREED` · `REJECTED` · `DEFERRED` · `OUT_OF_SCOPE`.
-- `Resolved In` links the turn shard that resolved it, e.g. `[P2](turns/P2-codex.md)`.
-- `HEAD.PLAN_OPEN_POINTS` mirrors the count of `OPEN` `P*` rows (lint-reconciled).
+IDs use P/PLAN or I/IMPL. Status is `OPEN`, `AGREED`, `REJECTED`, or `OUT_OF_SCOPE`. There is no
+DEFERRED: work resolves here, is deemed unnecessary, or is opened on a successor board. Resolved In
+links its turn as a markdown link whose destination is that turn's own shard — `[P2](turns/P2-codex.md)`,
+the form L2 parses — and is `-` while OPEN. HEAD.PLAN_OPEN_POINTS equals OPEN P rows. `archive`
+moves settled rows to `points-archive.md`; an id has a row in exactly one of the two files, an OPEN
+row never leaves `points.md`, and a decision weighs the two together (L4).
 
----
+## 7. Rules
 
-## 7. The rules (faithful to the original board)
+1. **Single State.** Hand rows exist only in HEAD `## State` (§3); agent/v2 mirrors them in
+   SELF_HAND, agent/v3 has no mirror.
+2. **Session contract.** PRIMARY fills Topic/Goal/Done before P1; SECONDARY ACKs and never edits it.
+3. **Two phases.** §4.
+4. **State machine.** §3.
+5. **Stall recovery.** After SESSION CHECK silence log STALL_CHECK; after the HANDOFF window force
+   the stalled actor ON_HOLD, self START, and log STALL_HANDOFF. Never for a known limit.
+6. **Deadlock.** More than three unresolved turns on one point forces PRIMARY `DECISION <id> ->
+   ACCEPT|REJECT`; no defer verb exists.
+7. **Impl authority.** Only PRIMARY edits project files, and records branch/base/latest each PRIMARY
+   IMPL turn, literal NONE where git state does not exist. A SECONDARY never edits project files.
+   PRIMARY may delegate execution to ONE sequential worker inside its own IMPL turn, attesting the
+   diff before HANDOFF; the worker holds no seat and `workers.md` owns the procedure. This clause
+   binds only boards whose pinned snapshot carries it; an older board is governed by the snapshot it
+   pinned, in which the worker tier does not exist.
+8. **Terminal.** COMPLETED/ABORTED sets both DONE, with no later activity; COMPLETED requires IMPL,
+   both IMPL gates, and no OPEN points. SECONDARY never terminalizes; it requests terminal status
+   in its turn body and PRIMARY decides.
+9. **User escalation.** Use `USER_QUESTION:` plus event only after both agents exchange evidence and
+   remain unsure, or cannot resolve persistent evidence-backed disagreement. Rule 6 still forces
+   PRIMARY at a hard per-point deadlock.
+10. **Gates.** §4.
+11. **Convergence.** `Converge: BARREN=<n>, CHURN=<n>` defaults to 8/2. If a phase produces no
+    settlement for BARREN turns, or one point is resolved/reopened CHURN times, PRIMARY must step
+    back: re-read SESSION, compare at least two approaches including "cannot reach Goal", choose
+    CONTINUE, REFRAME, NARROW, ESCALATE or ABORT, and log REFRAME with trigger
+    BARREN/CHURN/REPEAT/MANUAL. A second barren step-back must ESCALATE or ABORT. Either agent/user
+    may trigger MANUAL early; SECONDARY uses REFRAME_REQUEST. CONTINUE names the specific loop-
+    breaking next step and why; REFRAME carries abandoned evidence forward as points; NARROW marks
+    a genuine cut OUT_OF_SCOPE or opens it on a successor board. L26 blocks transitions until handled.
 
-1. **Single State section.** Hand-state tokens (`- <ACTOR>: <HAND>`) appear only in
-   `HEAD.md ## State`. Mirrors elsewhere use the `SELF_HAND:` key and are non-authoritative.
-2. **Session contract.** PRIMARY fills `SESSION.md` (Topic/Goal/Done) before opening `P1`.
-   SECONDARY `ACK`s it in its first turn body — it does **not** edit `SESSION.md`.
-3. **Two phases.** `PLAN → IMPL`; IMPL starts only when no `OPEN` `P*` points and both
-   `PLAN_AGREE_* = YES` (see §4).
-4. **State machine.** Receiver acts only on `START`; enter self→`WORKING`; exit self→
-   `ON_HOLD`, other→`START`. No parallel turns (§3).
-5. **Stall recovery.** No update for `CHECK` → log `STALL_CHECK`. Still silent after
-   `HANDOFF` window → force the stalled actor `ON_HOLD`, self→`START`, log `STALL_HANDOFF`.
-   Timers come from `SESSION.Stall` (default `CHECK=15m, HANDOFF=10m`).
-6. **Deadlock.** A point with more than 3 unresolved turns referencing it → PRIMARY decides:
-   append `DECISION <id> -> ACCEPT|REJECT|DEFER` (turn body + `log.md`).
-7. **Impl authority.** Only the **PRIMARY** edits project files (everything except the
-   board). SECONDARY reviews. Each PRIMARY impl turn records `BRANCH`, `BASE_COMMIT`,
-   `LATEST_COMMIT` in `impl/code_state.md` and echoes them in its shard. Use the literal `NONE`
-   for any that has no git value (a non-git repo, or before the first commit); the `—`/`-`
-   placeholder is what lint rejects.
-8. **Terminal.** `COMPLETED`/`ABORTED` sets both hands `DONE`; no new turns after.
-9. **User escalation.** Either actor may ask the user (project owner) when an answer cannot
-   be found in the codebase, docs, or web search **and, after exchanging evidence, both agents
-   remain unsure** (don't escalate unilaterally — challenge and ask each other first), **or**
-   when a substantive *evidence-backed* disagreement persists that neither side can resolve. Do
-   not let self-reported confidence settle such a dispute — stated certainty tracks neither
-   correctness nor independence. This stays a judgment call, never automatic: at a hard
-   per-point deadlock the PRIMARY still decides (Rule 6). Tag `USER_QUESTION:` in the turn body
-   and log a `USER_QUESTION` line.
-10. **Gates.** `PLAN_AGREE_*` / `IMPL_AGREE_*` live in `HEAD ## Gates`, each set by its own
-    actor during its own turn and logged `GATE_SET`.
+## 8. Append-only event log (`collab-board/log/v1`)
 
----
+Closed grammar, one real RFC3339 timestamped event per line. Payload fields are grammar, not
+decoration: a malformed line is refused, never partially applied. Malformed, unknown-type and
+commented-out events FAIL L22 — a well-formed event inside a comment is still not an event.
 
-## 8. Append-only event log (`log.md`, `collab-board/log/v1`)
-
-The log is the immutable **derivation** of live state. Lint replays it to recompute and
-verify `HEAD`. Closed event vocabulary (one event per line, `<ISO_TS>` first):
-
-```
-<ts> OPEN session=<TYPE> by=<ACTOR>
+```text
+<ts> OPEN session=<TYPE> by=<ACTOR> [agent_schema=<v1|v2|v3>] [ruleset=<id>]
 <ts> STATE_SET <A>=<hand> <B>=<hand> cursor=<id|-> next=<id>/<ACTOR> seq=<n>
-<ts> TURN_COMMIT <ID> actor=<ACTOR> responds_to=<id|NEW> points=<ids|-> [via=<adapter>] [branch=<b> base=<c> latest=<c>]
+<ts> TURN_COMMIT <ID> actor=<ACTOR> responds_to=<id|NEW> points=<ids|-> [via=<adapter>] [relayed_by=<ACTOR> attempt=<n> fused=yes contributors=<n> adjudicated=<id>:<who> renumbered=<id>:<who>-><newid> merged=<id>:<who> gate_partial=<GATE>:<k>/<n> gate_set=<GATE>:<k>/<n> gate_family=<GATE>:<k>/<n> absent=<who> capture_sha=<hex> ...] [branch=<b> base=<c> latest=<c>]
 <ts> POINT_SET <ID>=<STATUS> [<ID>=<STATUS> ...] in=<turn-id>
-<ts> GATE_SET <PLAN_AGREE_PRIMARY|PLAN_AGREE_SECONDARY|IMPL_AGREE_PRIMARY|IMPL_AGREE_SECONDARY>=YES by=<ACTOR> [justified_by=<turn>]
-<ts> PHASE_SET PLAN->IMPL plan_open_points=<n>
+<ts> GATE_SET <PLAN_AGREE_PRIMARY|PLAN_AGREE_SECONDARY|IMPL_AGREE_PRIMARY|IMPL_AGREE_SECONDARY>=YES by=<ACTOR> [justified_by=<turn-id>] [verified=self|reported]
+<ts> PHASE_SET PLAN->IMPL plan_open_points=0
 <ts> HANDOFF <A>:<from>-><to> <B>:<from>-><to> next=<id>/<ACTOR> seq=<n>
 <ts> STALL_CHECK actor=<ACTOR>
 <ts> STALL_HANDOFF stalled=<ACTOR> next=<id>/<ACTOR> seq=<n>
-<ts> DECISION <point-id> -> ACCEPT|REJECT|DEFER by=<ACTOR>
-<ts> USER_QUESTION by=<ACTOR> in=<turn>
+<ts> DECISION <point-id> -> ACCEPT|REJECT by=<ACTOR>
+<ts> USER_QUESTION by=<ACTOR> in=<turn-id>
+<ts> REFRAME by=<PRIMARY> in=<turn-id> trigger=<BARREN|CHURN|REPEAT|MANUAL> outcome=<CONTINUE|REFRAME|NARROW|ESCALATE|ABORT>
+<ts> SCHEMA_SET agent/<from>->agent/<to> by=<PRIMARY>   # declared edges only: v1->v2, v2->v3
 <ts> TERMINAL <COMPLETED|ABORTED> by=<ACTOR> seq=<n>
 ```
 
-The `HANDOFF` line is the commit point of a turn. `via=<adapter>` records how a SECONDARY
-turn was produced (`codex-cli`, `claude-cli`, `subagent:<name>`, `manual`; legacy `codex` =
-`codex-cli`; a self-driving peer-mode secondary omits it); `relayed_by=<actor>` is added when
-the PRIMARY scribed a secondary's turn — either a non-write-capable secondary (`manual`), or a
-write-capable one (e.g. `codex-cli`) whose sandbox blocked the board write but that returned a
-complete, concrete verdict the PRIMARY transcribes verbatim (never invents).
+POINT_SET ids are distinct and a non-OPEN status needs `in=` naming an existing turn. REFRAME and
+SCHEMA_SET are PRIMARY-authored; ESCALATE requires USER_QUESTION. OPEN provenance selects the agent
+schema; absent provenance is legacy v1.
 
-Event timestamps are non-decreasing (lint L23). A shell-free secondary receives
-`DISPATCH_UTC = max(host UTC now, HEAD.LAST_UPDATE + 1 ms)` from the PRIMARY in its scoped
-prompt and uses that base plus ordered 1 ms increments for every event and `LAST_UPDATE`;
-it never estimates wall-clock time. This can make `LAST_UPDATE` early by one synchronous
-turn duration, a bounded safe-direction skew that the next PRIMARY write corrects. If a
-`STALL_CHECK` overlaps a late-landing turn and produces a decrease, L23 intentionally fails
-as a near-double-writer diagnostic.
-L23 also rejects any log timestamp or `HEAD.LAST_UPDATE` more than 60 seconds ahead of
-the host clock, so a consistently fabricated future timeline cannot pass merely because
-its internal order is monotonic.
+`verified=` is optional: `self` means the gating actor ran the check it cites, `reported` that it
+relied on another actor's result, absent that no executable check applied — never "unverified". It
+requires `justified_by` and real Evidence in that shard (L20).
 
----
+`OPEN ruleset=<id>` records the rules in force at creation. A check a board can clear by a
+protocol-legal append gates every board; a DEAD-END check, one whose finding names immutable
+history, gates only boards declaring the ruleset that introduced it and merely reports on a board
+declaring none. Malformed or twice-declared provenance FAILs and is never read as absence. There is
+no migration edge.
 
-## 9. File schemas (v1)
+`via=` records the executor/manual/subagent/relay path and may be omitted in peer mode; a direct
+executor commit uses that executor's adapter id and a relayed one uses `via=relay`. `relayed_by=`
+records PRIMARY transcription, and PRIMARY_ONLY turns add attempt, capture and panel tokens — see
+`relay.md`.
 
-Every schema except `turn/v1` ships a bundled template; `turn/v1` shards are authored by hand
-per §5 and are never scaffolded. The authoritative field set:
+Timestamps are real and non-decreasing. A shell-free SECONDARY uses PRIMARY-supplied
+`DISPATCH_UTC=max(host UTC, HEAD.LAST_UPDATE+1ms)` plus ordered milliseconds. L23 rejects invalid,
+decreasing, or >60-second future time; equality remains valid for legacy second precision.
 
-- **HEAD/v1** — `SESSION_STATUS` (IDLE|ACTIVE|COMPLETED|ABORTED), `PHASE` (PLAN|IMPL),
-  `## State` (`- <ACTOR>: <HAND> - <ROLE>` ×2), `## Cursor` (`TURN_CURSOR`, `RESPONDS_TO` =
-  the session-relative path to the one prior shard, e.g. `turns/P2-codex.md`, or `-`;
-  `NEXT_TURN_ID`, `NEXT_ACTOR`, `SEQ`), `## Gates`
-  (`PLAN_AGREE_PRIMARY/SECONDARY`, `IMPL_AGREE_PRIMARY/SECONDARY`, `PLAN_OPEN_POINTS`),
-  `## Stall` (`LAST_UPDATE`, `STALL_STATE`). Actor names must be a single `[A-Za-z0-9_]` token.
-- **SESSION/v1** — `Type`, `Reset`, `Topic`, `Goal`, `Done`, `Stall`, `Roles`,
-  `SecondaryAdapter`. Adapter values: `codex-cli` | `claude-cli` | `subagent:<name>` |
-  `manual` (`codex` is a legacy alias of `codex-cli`, still valid on existing boards).
-  Default roles remain `PRIMARY=CLAUDE, SECONDARY=CODEX`. Unless explicitly overridden,
-  adapter choice is secondary-keyed: `SECONDARY=CODEX` -> `codex-cli`,
-  `SECONDARY=CLAUDE` -> `claude-cli`, otherwise `manual`.
-  A CLI executor must match the SECONDARY actor (lint L18): `codex-cli` ⇒
-  `SECONDARY=CODEX`, `claude-cli` ⇒ `SECONDARY=CLAUDE`; a pairing with no matching CLI
-  executor uses `manual` (incl. peer mode) or `subagent:<name>`. Optional keys `SecondaryModel:` /
-  `SecondaryEffort:` pin the executor's model/reasoning effort per session; absent =
-  inherit the user's CLI config.
-- **points/v1**, **log/v1**, **context/v1**, **code_state/v1**, **agent/v1** ship templates;
-  **turn/v1** is defined inline in §5. All as shown above.
-- **Machine tokens are fixed ASCII/English literals — never translate one.** Every schema key and
-  enum above (`HEAD` keys, hand-states, `PHASE`, gate names, log event names, point `Status`,
-  `SCHEMA:` ids, actor and adapter names) is parsed by regex and compared literally; a translated
-  or transliterated token silently fails to parse and diverges under lint (§10, L2). Human-facing
-  prose — turn bodies, `SESSION` Topic/Goal/Done, and the orchestrator's narration to the user —
-  may follow the session's working language, but defaults to ASCII while a write-capable adapter
-  that mangles non-ASCII (e.g. `codex-cli`) is active (lint L21).
+## 9. File schemas
 
----
+Every field a check parses by SHAPE states that shape here. A format that lives only in a dispatch
+prompt or a template is a format the author is sent nowhere to find.
+
+- **HEAD/v1:** `PROTOCOL`; SESSION_STATUS; PHASE; two State rows; Cursor TURN_CURSOR/RESPONDS_TO/
+  NEXT_TURN_ID/NEXT_ACTOR/SEQ; four agreement gates; PLAN_OPEN_POINTS; Stall LAST_UPDATE/STALL_STATE.
+  `RESPONDS_TO` is the session-relative path to the one prior shard — `turns/P2-codex.md` — or `-`
+  when there is none; L14 enforces that path form, and the scaffolded `-` is not a model for it.
+  Actor names match `[A-Za-z0-9_]+`. PROTOCOL resolves relative to the session and stays inside
+  `.collab-board` (L28).
+- **SESSION/v1:** Catalog, Protocol, Type, Reset, Topic, Goal, Done, Stall, optional Converge,
+  Roles, SecondaryAdapter. Protocol equals HEAD.PROTOCOL. Adapter values are `codex-cli`,
+  `claude-cli`, `copilot-cli`, `agy-cli`, `omp-cli`, `reasonix-cli`, `subagent:<name>`, `manual`, or
+  legacy `codex`. Defaults: CLAUDE/CODEX/codex-cli. Secondary-keyed families are CODEX, CLAUDE,
+  COPILOT, ANTIGRAVITY, OMP, REASONIX exact or `_` suffix (L18). Actors differ; models may match.
+  SecondaryModel/SecondaryEffort pin the secondary's model and effort; each adapter maps them and
+  states what absence inherits, which is not always a CLI. Optional
+  `BoardWriteMode: PRIMARY_ONLY`; optional two-or-more distinct `SecondaryPanel` requires it.
+- **points/v1**, **log/v1**, **context/v1**, **code_state/v1**, and **agent/v3** ship templates;
+  turn/v1 is §5.
+- **agent/v3** has exactly ACTIVE_RECOVERY, EXECUTOR_THREAD, UNRESOLVED_CONCERNS before
+  PRIVATE_NOTES; every key has NONE. Recovery/thread carry structured state; concerns are
+  `<point>@<pointer>` only. Discretionary notes have L24 byte limits. **agent/v2** additionally
+  carries SELF_HAND and LAST_TURN_WRITTEN, which v3 drops. Applicability comes from
+  OPEN/SCHEMA_SET provenance ONLY — never from a file's shape or the tool version. `migrate --to agent/v2` and `migrate --to agent/v3` are explicit and atomic, and only a declared edge
+  migrates. Legacy v1 remains readable.
+- Machine keys/enums are fixed ASCII. Human prose may localize; adapters that re-encode text use
+  ASCII prose (L21 detects BOM/mojibake symptoms).
 
 ## 10. Lint invariants
 
-`node "$SKILL/scripts/collab-board.mjs" lint --session <id>` — where `$SKILL` is the
-installed skill directory (Claude Code: `.claude/skills/collab-board/` in the project or
-`~/.claude/skills/collab-board/` globally; Codex: `$CODEX_HOME/skills/collab-board/`,
-default `~/.codex/skills/collab-board/`), run from the project root. It is read-only: it
-recomputes every
-denormalized field from its authoritative source and reports `PASS`/`WARN`/`FAIL`, exiting
-non-zero on any `FAIL`. Run it after **every** turn and before any phase/terminal transition.
-L23 also makes the shell-free `DISPATCH_UTC` timestamp discipline machine-checkable.
-The check list and its mapping to these rules lives in `references/lint-spec.md`.
+In `references/lint-spec.md`, which owns them.

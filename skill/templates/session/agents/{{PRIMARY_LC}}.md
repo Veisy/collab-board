@@ -1,11 +1,12 @@
 # {{PRIMARY}} self-state — {{ID}}
-SCHEMA: collab-board/agent/v1
+SCHEMA: collab-board/agent/v3
 
-SELF_HAND: ON_HOLD
-LAST_TURN_WRITTEN: -
+ACTIVE_RECOVERY: NONE
+EXECUTOR_THREAD: NONE
+UNRESOLVED_CONCERNS: NONE
 
 PRIVATE_NOTES:
 <!-- Scratch space for this actor only. NON-AUTHORITATIVE — HEAD.md ## State is the truth.
-     The secondary's fresh-vs-resume choice lives in ITS agent file (stored executor id);
-     fresh is the default every turn. -->
+     The three keys above are a CLOSED grammar; their forms and the size ladder that applies
+     below this comment are in references/protocol.md §9. -->
 - (none yet)

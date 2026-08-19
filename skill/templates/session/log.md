@@ -2,6 +2,7 @@
 SCHEMA: collab-board/log/v1
 
 <!-- Append one event line per state change (see PROTOCOL.md §8). Events, not prose.
-     The HANDOFF line is the commit point of a turn. Never edit or delete earlier lines. -->
+     The HANDOFF line is the commit point of a non-terminal turn; a final PRIMARY turn commits
+     at its TERMINAL line instead. Never edit or delete earlier lines. -->
 
-{{TIMESTAMP}} OPEN session={{TYPE}} by={{PRIMARY}}
+{{TIMESTAMP}} OPEN session={{TYPE}} by={{PRIMARY}} agent_schema=v3 ruleset=r1

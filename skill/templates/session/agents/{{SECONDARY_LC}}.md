@@ -1,13 +1,12 @@
 # {{SECONDARY}} self-state — {{ID}}
-SCHEMA: collab-board/agent/v1
+SCHEMA: collab-board/agent/v3
 
-SELF_HAND: ON_HOLD
-LAST_TURN_WRITTEN: -
+ACTIVE_RECOVERY: NONE
+EXECUTOR_THREAD: NONE
+UNRESOLVED_CONCERNS: NONE
 
 PRIVATE_NOTES:
 <!-- Scratch space for this actor only. NON-AUTHORITATIVE — HEAD.md ## State is the truth.
-     Fresh dispatch is the default every turn; a deliberate resume needs the executor's
-     stored id (codex thread_id / claude session_id) persisted here after the dispatch.
-     Carry forward only compact context not already authoritative in HEAD/points/turn shards
-     (for example, standing concerns); never treat PRIVATE_NOTES as evidence. -->
+     The three keys above are a CLOSED grammar; their forms and the size ladder that applies
+     below this comment are in references/protocol.md §9. -->
 - (none yet)

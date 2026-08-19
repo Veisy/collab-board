@@ -22,9 +22,9 @@ Do this:
    `CLAUDE` / `CODEX`; the adapter defaults secondary-keyed — CODEX → `codex-cli`,
    CLAUDE → `claude-cli`, otherwise `manual`).
 2. Scaffold: `node "<SCRIPT>" new --type <type> --slug <slug>`. This creates
-   `.collab-board/sessions/<id>/` and bootstraps `.collab-board/PROTOCOL.md` + `index.md` on
-   first use. Note the printed `<id>`.
-3. Read `.collab-board/PROTOCOL.md` once. Fill `sessions/<id>/SESSION.md` Topic/Goal/Done
+   `.collab-board/sessions/<id>/`, including an immutable `PROTOCOL.md` snapshot, and bootstraps
+   the root catalog on first use. Note the printed `<id>`.
+3. Read the protocol path declared by `sessions/<id>/HEAD.md` once. Fill `SESSION.md` Topic/Goal/Done
    (Rule 2; the file is write-once).
 4. Take **TURN-P1** as the PRIMARY per the skill (first-turn bootstrap: activate yourself,
    author the shard, update points/log/HEAD), then hand off to the SECONDARY and drive the

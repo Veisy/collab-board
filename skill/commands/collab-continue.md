@@ -19,7 +19,8 @@ Do this:
 2. Verify first: `node "<SCRIPT>" lint --session <id>`. If it `FAIL`s, resolve per the skill's
    remediation (complete a missing write, or delete an orphan shard and re-take the turn)
    **before** continuing — do not build on an inconsistent board.
-3. Read `.collab-board/PROTOCOL.md` once (then rely on memory), then `sessions/<id>/HEAD.md`.
+3. Read `sessions/<id>/HEAD.md`, then read its declared `PROTOCOL` target once (legacy sessions
+   may point at the shared root; new sessions use their immutable local snapshot).
    Act on the hand at `START`:
    - if it is the **PRIMARY** (you), take the turn per the skill;
    - if it is the **SECONDARY**, delegate via its adapter: dispatch per the executor spec

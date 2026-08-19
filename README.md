@@ -90,8 +90,10 @@ turn. If the delegated model hits a usage limit mid-session, the orchestrator pa
 safe turn, schedules its own resume for when the limit resets, and continues without waiting for
 you.
 
-With Claude + Codex, the orchestrating model dispatches the other through its local CLI. Other
-pairs can use a subagent, share the same workspace, or relay turns manually.
+With Claude + Codex, the orchestrating model dispatches the other through its local CLI. First-class
+CLI adapters also support Copilot, Antigravity, Oh My Pi, and Reasonix. OMP and Reasonix inherit
+their configured model by default, so the board is coupled to the harness, not to one model.
+Other pairs can use a subagent, share the same workspace, or relay turns manually.
 
 ## Slash commands
 
@@ -107,9 +109,13 @@ pairs can use a subagent, share the same workspace, or relay turns manually.
 ```text
 .collab-board/
 ├── index.md                  # session catalog
-├── PROTOCOL.md               # rules and file schemas
-└── sessions/<id>/            # state, decisions, evidence, and turn notes
+└── sessions/<id>/
+    ├── PROTOCOL.md           # immutable rules/schema snapshot for this session
+    └── ...                   # state, decisions, evidence, and turn notes
 ```
+
+Existing boards that already reference a shared root `PROTOCOL.md` remain readable; new boards do
+not create that redundant compatibility file.
 
 The board is plain Markdown. The engine is a dependency-free Node.js script, and the complete
 installable skill lives in [`skill/`](skill/).
